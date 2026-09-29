@@ -19,6 +19,8 @@ pub enum Query<'a> {
     Clipboard(&'a str),
     /// `/files` or `/files budget`: files and folders only.
     Files(&'a str),
+    /// `/apps` or `/apps chr`: installed apps only.
+    Apps(&'a str),
     /// `;addr`, `/snip` or `/snip addr`: snippets.
     Snippets(&'a str),
     /// `/note` or `/note buy milk`: notes, and saving a new one.
@@ -46,6 +48,7 @@ enum Kind {
     Run,
     Clipboard,
     Files,
+    Apps,
     Snippets,
     Notes,
 }
@@ -71,6 +74,13 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         description: "Search Wikipedia",
         glyph: "web",
         kind: Kind::Web(&web::WIKIPEDIA),
+    },
+    SlashCommand {
+        name: "apps",
+        aliases: &["app", "applications"],
+        description: "Every installed app",
+        glyph: "apps",
+        kind: Kind::Apps,
     },
     SlashCommand {
         name: "files",
@@ -137,6 +147,7 @@ impl SlashCommand {
             Kind::Run => Query::Run(text),
             Kind::Clipboard => Query::Clipboard(text),
             Kind::Files => Query::Files(text),
+            Kind::Apps => Query::Apps(text),
             Kind::Snippets => Query::Snippets(text),
             Kind::Notes => Query::Notes(text),
         }
@@ -208,6 +219,7 @@ mod tests {
         assert_eq!(parse("/c "), Query::Clipboard(""));
         assert_eq!(parse("/files tax 2025"), Query::Files("tax 2025"));
         assert_eq!(parse("/f "), Query::Files(""));
+        assert_eq!(parse("/apps chr"), Query::Apps("chr"));
         assert_eq!(parse("/snip addr"), Query::Snippets("addr"));
         assert_eq!(parse("/note buy milk "), Query::Notes("buy milk"));
         assert_eq!(parse("/n "), Query::Notes(""));

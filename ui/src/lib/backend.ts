@@ -32,6 +32,8 @@ export interface SetupChoices {
   clipboardMaxDays: number;
   /** Searched besides Desktop, Documents and Downloads. */
   extraFolders: string[];
+  /** Kept out of search results; `key` is the result's ID. */
+  hidden: { key: string; name: string }[];
 }
 
 export interface SetupOptions {
@@ -181,6 +183,12 @@ export const backend = {
             clipboardMaxItems: 500,
             clipboardMaxDays: 30,
             extraFolders: new URLSearchParams(location.search).has("folders") ? ["D:\\Projects", "E:\\Music"] : [],
+            hidden: new URLSearchParams(location.search).has("folders")
+              ? [
+                  { key: "app:Chrome Remote Desktop", name: "Chrome Remote Desktop" },
+                  { key: "sys:signout", name: "Sign out" },
+                ]
+              : [],
           },
         });
   },

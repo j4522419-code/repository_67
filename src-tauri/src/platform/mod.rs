@@ -12,6 +12,7 @@ mod registry;
 mod shell;
 pub mod startup;
 pub mod watch;
+pub mod window;
 
 use windows::Win32::System::Com::{
     CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,

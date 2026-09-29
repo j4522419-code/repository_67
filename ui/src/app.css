@@ -1,8 +1,9 @@
-/* Colors follow the Windows 11 light/dark palettes. The backgrounds are
-   partly transparent so the window's acrylic blur shows through. */
+/* Light and dark palettes in the spirit of macOS Spotlight. The
+   backgrounds are partly transparent so the window's acrylic blur shows
+   through; the selected row is filled with the accent blue. */
 :root {
   color-scheme: light dark;
-  --surface: rgba(243, 243, 243, 0.82);
+  --surface: rgba(246, 246, 246, 0.78);
   --text: #1b1b1b;
   --text-secondary: rgba(0, 0, 0, 0.62);
   --text-tertiary: rgba(0, 0, 0, 0.45);
@@ -12,16 +13,19 @@
   --selected-fill: rgba(0, 0, 0, 0.06);
   --warning-bg: rgba(255, 185, 0, 0.22);
   --error-bg: rgba(196, 43, 28, 0.14);
-  --accent: #005fb8;
-  --accent-fill: rgba(0, 95, 184, 0.12);
+  --accent: #0a64d8;
+  --accent-fill: rgba(10, 100, 216, 0.12);
   --on-accent: #ffffff;
+  --selection-bg: #0a64d8;
+  --selection-text: #ffffff;
+  --selection-text-secondary: rgba(255, 255, 255, 0.78);
 }
 
 /* Dark colors: when Windows is dark (unless Grandium is set to light), or
    when Grandium is set to dark. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --surface: rgba(32, 32, 32, 0.78);
+    --surface: rgba(30, 30, 32, 0.74);
     --text: #ffffff;
     --text-secondary: rgba(255, 255, 255, 0.72);
     --text-tertiary: rgba(255, 255, 255, 0.5);
@@ -31,15 +35,18 @@
     --selected-fill: rgba(255, 255, 255, 0.09);
     --warning-bg: rgba(252, 225, 0, 0.16);
     --error-bg: rgba(255, 153, 164, 0.16);
-    --accent: #4cc2ff;
-    --accent-fill: rgba(76, 194, 255, 0.16);
-    --on-accent: #000000;
+    --accent: #3b8cff;
+    --accent-fill: rgba(59, 140, 255, 0.18);
+    --on-accent: #ffffff;
+    --selection-bg: #2a6fdb;
+    --selection-text: #ffffff;
+    --selection-text-secondary: rgba(255, 255, 255, 0.75);
   }
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --surface: rgba(32, 32, 32, 0.78);
+  --surface: rgba(30, 30, 32, 0.74);
   --text: #ffffff;
   --text-secondary: rgba(255, 255, 255, 0.72);
   --text-tertiary: rgba(255, 255, 255, 0.5);
@@ -49,9 +56,12 @@
   --selected-fill: rgba(255, 255, 255, 0.09);
   --warning-bg: rgba(252, 225, 0, 0.16);
   --error-bg: rgba(255, 153, 164, 0.16);
-  --accent: #4cc2ff;
-  --accent-fill: rgba(76, 194, 255, 0.16);
-  --on-accent: #000000;
+  --accent: #3b8cff;
+  --accent-fill: rgba(59, 140, 255, 0.18);
+  --on-accent: #ffffff;
+  --selection-bg: #2a6fdb;
+  --selection-text: #ffffff;
+  --selection-text-secondary: rgba(255, 255, 255, 0.75);
 }
 
 :root[data-theme="light"] {

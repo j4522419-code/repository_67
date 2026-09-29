@@ -36,6 +36,8 @@ const MAX_FILE_RESULTS: usize = 50;
 const FILES_AMONG_EVERYTHING: usize = 3;
 /// Files rank a little below apps and commands that match as well.
 const FILE_WEIGHT: f64 = 0.7;
+/// `/apps` lists every app.
+const MAX_APP_RESULTS: usize = 1000;
 const MAX_SNIPPET_RESULTS: usize = 50;
 const MAX_NOTE_RESULTS: usize = 50;
 /// How many snippets and notes can show up among everything else.
@@ -143,6 +145,11 @@ const fn action(id: &'static str, label: &'static str, shortcut: &'static str) -
     }
 }
 
+/// Keeps a result out of searches from now on (undone in Settings).
+const fn hide_action() -> ResultAction {
+    action("hide", "Hide from Grandium", "Ctrl+H")
+}
+
 fn app_result(app: &App, highlights: Vec<[u32; 2]>) -> SearchResult {
     let target = app.target.as_deref();
     let mut actions = vec![action("open", "Open", "Enter")];
@@ -178,6 +185,7 @@ fn app_result(app: &App, highlights: Vec<[u32; 2]>) -> SearchResult {
             confirm: Some(question),
         });
     }
+    actions.push(hide_action());
     SearchResult {
         id: app.key.clone(),
         title: app.name.clone(),
@@ -237,10 +245,13 @@ fn system_result(command: &'static Command, highlights: Vec<[u32; 2]>) -> Search
         icon: None,
         glyph: Some(command.id),
         highlights,
-        actions: vec![ResultAction {
-            confirm: command.confirm.map(String::from),
-            ..action("run", command.name, "Enter")
-        }],
+        actions: vec![
+            ResultAction {
+                confirm: command.confirm.map(String::from),
+                ..action("run", command.name, "Enter")
+            },
+            hide_action(),
+        ],
         ..Default::default()
     }
 }
@@ -451,6 +462,7 @@ fn file_result(
             action("open", "Open", "Enter"),
             action("openLocation", "Open file location", "Ctrl+Enter"),
             action("copyPath", "Copy path", "Ctrl+Shift+C"),
+            hide_action(),
         ],
         ..Default::default()
     }
@@ -458,10 +470,12 @@ fn file_result(
 
 /// Files and folders whose name has every word of `text` in it, best
 /// first, with how well each matched.
-/// Notes (in `notes_dir`) show up as notes instead.
+/// Notes (in `notes_dir`) show up as notes instead, and `hidden` ones not
+/// at all.
 fn file_matches(
     index: &FileIndex,
     notes_dir: &Path,
+    hidden: &HashSet<&Path>,
     ranker: &mut Ranker,
     text: &str,
     limit: usize,
@@ -471,6 +485,7 @@ fn file_matches(
     let items: Vec<(&Path, &Meta, &str)> = index
         .iter()
         .filter(|(path, _)| !path.starts_with(notes_dir))
+        .filter(|(path, _)| hidden.is_empty() || !hidden.contains(path))
         .map(|(path, meta)| (path, meta, file_index::display_name(path)))
         .collect();
     // Files changed lately are more likely to be the ones wanted.
@@ -655,13 +670,29 @@ pub fn search(query: String, app: AppHandle) -> Vec<SearchResult> {
     let mut ranker = state.ranker.lock().unwrap();
     let now = unix_now();
     let boost = |key: &str| usage.boost(key, now);
+    let hidden: HashSet<String> = settings
+        .get()
+        .hidden
+        .into_iter()
+        .map(|item| item.key)
+        .collect();
+    let hidden_files: HashSet<&Path> = hidden
+        .iter()
+        .filter_map(|key| key.strip_prefix("file:"))
+        .map(Path::new)
+        .collect();
+    let all_apps = index.apps();
+    let apps: Vec<&App> = all_apps
+        .iter()
+        .filter(|app| !hidden.contains(&app.key))
+        .collect();
     let system_matches = |ranker: &mut Ranker, text: &str| {
         system::search(ranker, text, |command| boost(&system_key(command)))
             .into_iter()
             .map(|m| (m.score, system_result(m.command, m.highlights)))
     };
 
-    match query::parse(&query) {
+    let mut results: Vec<SearchResult> = match query::parse(&query) {
         Query::Calculator(text) => calc::evaluate(text, false)
             .map(calc_result)
             .into_iter()
@@ -687,6 +718,26 @@ pub fn search(query: String, app: AppHandle) -> Vec<SearchResult> {
             }
             results
         }
+        Query::Apps("") => {
+            let mut sorted = apps.clone();
+            sorted.sort_by_cached_key(|app| app.name.to_lowercase());
+            sorted
+                .into_iter()
+                .take(MAX_APP_RESULTS)
+                .map(|app| app_result(app, Vec::new()))
+                .collect()
+        }
+        Query::Apps(text) => ranker
+            .rank(
+                text,
+                &apps,
+                |app| &app.name,
+                |app| boost(&app.key),
+                MAX_APP_RESULTS,
+            )
+            .into_iter()
+            .map(|r| app_result(apps[r.index], r.highlights))
+            .collect(),
         Query::Files("") => {
             let index = files.index();
             let notes_dir = note_store.dir();
@@ -694,6 +745,7 @@ pub fn search(query: String, app: AppHandle) -> Vec<SearchResult> {
                 .recent(MAX_FILE_RESULTS * 2)
                 .into_iter()
                 .filter(|(path, _)| !path.starts_with(&notes_dir))
+                .filter(|(path, _)| !hidden_files.contains(path))
                 .take(MAX_FILE_RESULTS)
                 .map(|(path, meta)| file_result(&index, path, meta, Vec::new()))
                 .collect()
@@ -701,6 +753,7 @@ pub fn search(query: String, app: AppHandle) -> Vec<SearchResult> {
         Query::Files(text) => file_matches(
             &files.index(),
             &note_store.dir(),
+            &hidden_files,
             &mut ranker,
             text,
             MAX_FILE_RESULTS,
@@ -783,7 +836,6 @@ pub fn search(query: String, app: AppHandle) -> Vec<SearchResult> {
                 .then(|| platform::find_program(text))
                 .flatten()
                 .map(|path| run_result(text, Some(path), "run"));
-            let apps = index.apps();
             let mut ranked: Vec<(f64, SearchResult)> = ranker
                 .rank(
                     text,
@@ -793,7 +845,7 @@ pub fn search(query: String, app: AppHandle) -> Vec<SearchResult> {
                     MAX_RESULTS,
                 )
                 .into_iter()
-                .map(|r| (r.score, app_result(&apps[r.index], r.highlights)))
+                .map(|r| (r.score, app_result(apps[r.index], r.highlights)))
                 .collect();
             ranked.extend(system_matches(&mut ranker, text));
             if text.chars().count() >= 2 {
@@ -803,6 +855,7 @@ pub fn search(query: String, app: AppHandle) -> Vec<SearchResult> {
                 let found = file_matches(
                     &files.index(),
                     &note_store.dir(),
+                    &hidden_files,
                     &mut ranker,
                     text,
                     FILES_AMONG_EVERYTHING + 2,
@@ -859,7 +912,10 @@ pub fn search(query: String, app: AppHandle) -> Vec<SearchResult> {
                 )))
                 .collect()
         }
-    }
+    };
+    // Anything hidden that other kinds of results brought back.
+    results.retain(|result| !hidden.contains(&result.id));
+    results
 }
 
 #[tauri::command]
@@ -870,6 +926,10 @@ pub async fn run_action(
     action: String,
 ) -> Result<Outcome, String> {
     let (kind, details) = id.split_once(':').ok_or("Unknown result.")?;
+    if action == "hide" {
+        hide_result(&app, &id);
+        return Ok(Outcome::Refresh);
+    }
     match kind {
         "clip" => return run_clipboard_action(&app, &window, details, &action).await,
         "clipcmd" => {
@@ -990,6 +1050,20 @@ async fn run_file_action(
             Ok(())
         }
     }
+}
+
+/// Keeps a result out of searches from now on, under a name to show in
+/// Settings, where it can be brought back.
+fn hide_result(app: &AppHandle, id: &str) {
+    let name = match id.split_once(':') {
+        Some(("app", _)) => app.state::<AppIndex>().find(id).map(|found| found.name),
+        Some(("file", path)) => Some(file_index::display_name(Path::new(path)).to_string()),
+        Some(("sys", command)) => system::command(command).map(|c| c.name.to_string()),
+        _ => None,
+    }
+    .unwrap_or_else(|| id.to_string());
+    app.state::<SettingsStore>()
+        .update(|settings| settings.hide(id, &name));
 }
 
 async fn run_snippet_action(

@@ -16,6 +16,22 @@ const APPS = [
   "File Explorer",
 ];
 
+function appResult(title: string, highlights: [number, number][]): SearchResult {
+  return result({
+    id: `app:${title}`,
+    title,
+    kind: "App",
+    highlights,
+    actions: [
+      action("open", "Open"),
+      action("openLocation", "Open file location", "Ctrl+Enter"),
+      action("runAsAdmin", "Run as administrator", "Ctrl+Shift+Enter"),
+      action("uninstall", "Uninstall", null, `Uninstall ${title}? This opens its uninstaller.`),
+      action("hide", "Hide from Grandium", "Ctrl+H"),
+    ],
+  });
+}
+
 const SYSTEM: [id: string, name: string, confirm: string | null][] = [
   ["lock", "Lock", null],
   ["sleep", "Sleep", null],
@@ -54,6 +70,7 @@ const COMMANDS: [name: string, description: string, glyph: string][] = [
   ["google", "Search Google · also /g", "web"],
   ["youtube", "Search YouTube · also /yt", "web"],
   ["wiki", "Search Wikipedia · also /w, /wikipedia", "web"],
+  ["apps", "Every installed app · also /app, /applications", "apps"],
   ["files", "Find files and folders · also /f, /file", "file"],
   ["snip", "Paste a snippet, or make one (also just type ;) · also /snippet, /snippets", "snippet"],
   ["note", "Save a quick note, or find one · also /n, /notes", "note"],
@@ -86,6 +103,11 @@ export function previewSearch(query: string): SearchResult[] {
   if (snip) return previewSnippets(q.slice(snip[0].length).trim());
   const note = /^\/(notes?|n)(\s|$)/.exec(query.trimStart().toLowerCase());
   if (note) return previewNotes(query.trimStart().slice(note[0].length).trim());
+  const apps = /^\/(apps?|applications)(\s|$)/.exec(q);
+  if (apps) {
+    const rest = q.slice(apps[0].length).trim();
+    return [...APPS].sort().filter((t) => t.toLowerCase().includes(rest)).map((title) => appResult(title, matching(title, rest) ?? []));
+  }
   const files = /^\/(files?|f)(\s|$)/.exec(q);
   if (files) return previewFiles(q.slice(files[0].length).trim(), 50);
   const results: SearchResult[] = [];
@@ -115,21 +137,7 @@ export function previewSearch(query: string): SearchResult[] {
   }
   for (const title of APPS) {
     const highlights = matching(title, q);
-    if (!highlights) continue;
-    results.push(result({
-      id: `app:${title}`,
-      title,
-      kind: "App",
-      icon: null,
-      glyph: null,
-      highlights,
-      actions: [
-        action("open", "Open"),
-        action("openLocation", "Open file location", "Ctrl+Enter"),
-        action("runAsAdmin", "Run as administrator", "Ctrl+Shift+Enter"),
-        action("uninstall", "Uninstall", null, `Uninstall ${title}? This opens its uninstaller.`),
-      ],
-    }));
+    if (highlights) results.push(appResult(title, highlights));
   }
   for (const [id, name, confirm] of SYSTEM) {
     const highlights = matching(name, q);

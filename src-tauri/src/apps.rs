@@ -10,6 +10,7 @@ use grandium_core::apps;
 use grandium_core::uninstall::{self, InstalledProgram};
 use tauri::{AppHandle, Manager};
 
+use crate::icons::IconServer;
 use crate::platform::{self, Com};
 
 /// Re-read the app list at most this often.
@@ -86,6 +87,10 @@ pub fn refresh_if_stale(app: &AppHandle) {
         let index = app.state::<AppIndex>();
         // On failure keep the old list; the next refresh tries again.
         if let Ok(found) = found {
+            // Have every app's icon ready before it's first shown.
+            if let Some(icons) = app.try_state::<Arc<IconServer>>() {
+                icons.warm(found.iter().map(|app| app.id.clone()));
+            }
             *index.apps.write().unwrap() = Arc::new(found);
             *index.refreshed_at.lock().unwrap() = Some(Instant::now());
         }

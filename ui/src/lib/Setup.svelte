@@ -29,6 +29,7 @@
   let clipboardMaxItems = $state(500);
   let clipboardMaxDays = $state(30);
   let extraFolders = $state<string[]>([]);
+  let hidden = $state<{ key: string; name: string }[]>([]);
   let error = $state<string | null>(null);
   let form = $state<HTMLFormElement>();
 
@@ -48,6 +49,7 @@
     clipboardMaxItems = current.clipboardMaxItems;
     clipboardMaxDays = current.clipboardMaxDays;
     extraFolders = current.extraFolders;
+    hidden = current.hidden;
     queueMicrotask(() => form?.querySelector<HTMLInputElement>("input:checked")?.focus());
   });
 
@@ -65,6 +67,7 @@
       clipboardMaxItems: Number(clipboardMaxItems),
       clipboardMaxDays: Number(clipboardMaxDays),
       extraFolders,
+      hidden,
     };
   }
 
@@ -218,6 +221,23 @@
             </div>
           {/each}
           <button type="button" class="add" onclick={addFolder}>Add a folder…</button>
+        </fieldset>
+
+        <fieldset>
+          <legend>Hidden from Grandium</legend>
+          {#each hidden as item (item.key)}
+            <div class="folder">
+              <span class="path">{item.name}</span>
+              <button type="button" onclick={() => (hidden = hidden.filter((h) => h.key !== item.key))}>
+                Show again
+              </button>
+            </div>
+          {:else}
+            <p class="note first">
+              Nothing yet. Right-click something in the results (or press Tab) and pick “Hide from
+              Grandium”.
+            </p>
+          {/each}
         </fieldset>
       {/if}
     {/if}

@@ -18,10 +18,13 @@ mod setup;
 mod snippets;
 mod tray;
 
+use std::sync::Arc;
+
 use tauri::Manager;
 
 fn main() {
-    let icon_server = icons::IconServer::start();
+    let icon_server = Arc::new(icons::IconServer::start());
+    let serving_icons = icon_server.clone();
 
     tauri::Builder::default()
         // Must be the first plugin: starting Grandium again just opens the
@@ -36,11 +39,12 @@ fn main() {
         )
         .register_asynchronous_uri_scheme_protocol(
             icons::SCHEME,
-            move |_ctx, request, responder| icon_server.handle(request, responder),
+            move |_ctx, request, responder| serving_icons.handle(request, responder),
         )
         .register_asynchronous_uri_scheme_protocol(clipboard::SCHEME, |ctx, request, responder| {
             clipboard::serve_picture(ctx.app_handle(), request, responder)
         })
+        .manage(icon_server)
         .manage(apps::AppIndex::default())
         .manage(file_search::FileSearch::default())
         .invoke_handler(tauri::generate_handler![
@@ -70,6 +74,7 @@ fn main() {
             app.manage(snippets::SnippetStore::load(file("snippets.json")));
             app.manage(notes::NoteStore::new(notes::notes_dir(handle)));
             app.manage(launcher::LauncherState::default());
+            launcher::prepare_window(handle);
 
             // Problems here (another app owning the hotkey, say) show up in
             // the launcher; Grandium still starts.

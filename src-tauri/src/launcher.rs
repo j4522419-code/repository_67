@@ -98,6 +98,16 @@ pub fn apply_theme(app: &AppHandle, theme: Theme) {
     }
 }
 
+/// Gives the launcher window rounded corners.
+pub fn prepare_window(app: &AppHandle) {
+    if let Some(hwnd) = app
+        .get_webview_window(LABEL)
+        .and_then(|window| window.hwnd().ok())
+    {
+        platform::window::round_corners(hwnd);
+    }
+}
+
 /// While a dialog of ours is open, clicking into it doesn't hide the
 /// launcher.
 pub fn set_dialog_open(app: &AppHandle, open: bool) {

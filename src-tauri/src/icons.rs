@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, Mutex};
 
 use grandium_core::file_index;
 use percent_encoding::percent_decode_str;
@@ -18,35 +19,42 @@ pub const SCHEME: &str = "icon";
 /// Pixels; sharp at the UI's 32px on displays scaled up to 200%.
 const SIZE: u32 = 64;
 
+/// Icons read so far, by shared key. Failures are kept too, so a broken
+/// icon isn't retried on every keystroke.
+type Cache = Arc<Mutex<HashMap<String, Option<Vec<u8>>>>>;
+
 pub struct IconServer {
     requests: Sender<(String, UriSchemeResponder)>,
+    warm: Sender<String>,
 }
 
 impl IconServer {
-    /// Starts the thread that reads icons. All shell calls happen on that
-    /// one thread, so the UI never waits on them.
+    /// Starts two threads that read icons, so the UI never waits on the
+    /// shell: one answers the UI, the other reads icons ahead of time.
     pub fn start() -> Self {
+        let cache = Cache::default();
+
         let (requests, incoming) = mpsc::channel::<(String, UriSchemeResponder)>();
+        let serving = cache.clone();
         std::thread::spawn(move || {
             let _com = Com::init();
-            // Failures are cached too, so a broken icon isn't retried on every keystroke.
-            let mut cache: HashMap<String, Option<Vec<u8>>> = HashMap::new();
             for (key, responder) in incoming {
-                let (shared, source) = source(&key);
-                let png = cache.entry(shared).or_insert_with(|| {
-                    match source {
-                        Source::App(id) => platform::app_icon(id, SIZE),
-                        Source::File(path) => platform::file_icon(path, SIZE),
-                    }
-                    .ok()
-                });
-                responder.respond(match png {
-                    Some(png) => png_response(png.clone()),
+                responder.respond(match icon(&serving, &key) {
+                    Some(png) => png_response(png),
                     None => not_found(),
                 });
             }
         });
-        Self { requests }
+
+        let (warm, to_warm) = mpsc::channel::<String>();
+        std::thread::spawn(move || {
+            let _com = Com::init();
+            for key in to_warm {
+                icon(&cache, &key);
+            }
+        });
+
+        Self { requests, warm }
     }
 
     pub fn handle(&self, request: Request<Vec<u8>>, responder: UriSchemeResponder) {
@@ -54,6 +62,29 @@ impl IconServer {
         let id = percent_decode_str(path).decode_utf8_lossy().into_owned();
         let _ = self.requests.send((id, responder));
     }
+
+    /// Reads these icons in the background, so they're ready when shown.
+    pub fn warm(&self, keys: impl IntoIterator<Item = String>) {
+        for key in keys {
+            let _ = self.warm.send(key);
+        }
+    }
+}
+
+/// The icon for `key`, from the cache or read now.
+fn icon(cache: &Cache, key: &str) -> Option<Vec<u8>> {
+    let (shared, source) = source(key);
+    if let Some(known) = cache.lock().unwrap().get(&shared) {
+        return known.clone();
+    }
+    // Read without holding the lock: the other thread may need it.
+    let png = match source {
+        Source::App(id) => platform::app_icon(id, SIZE),
+        Source::File(path) => platform::file_icon(path, SIZE),
+    }
+    .ok();
+    cache.lock().unwrap().insert(shared, png.clone());
+    png
 }
 
 enum Source<'a> {

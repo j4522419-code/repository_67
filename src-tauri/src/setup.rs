@@ -2,7 +2,7 @@
 //! tray's "Settings…". It's where every setting is changed.
 
 use grandium_core::settings::{
-    Settings, Theme, CLIPBOARD_DAY_CHOICES, CLIPBOARD_ITEM_CHOICES, HOTKEYS,
+    HiddenItem, Settings, Theme, CLIPBOARD_DAY_CHOICES, CLIPBOARD_ITEM_CHOICES, HOTKEYS,
 };
 use grandium_core::web;
 use serde::{Deserialize, Serialize};
@@ -46,6 +46,8 @@ pub struct SetupChoices {
     clipboard_max_items: usize,
     clipboard_max_days: u32,
     extra_folders: Vec<String>,
+    /// Kept out of search results.
+    hidden: Vec<HiddenItem>,
 }
 
 /// Opens the launcher on the setup screen.
@@ -101,6 +103,7 @@ pub fn setup_options(app: AppHandle) -> SetupOptions {
             clipboard_max_items: settings.clipboard_max_items,
             clipboard_max_days: settings.clipboard_max_days,
             extra_folders: settings.extra_folders,
+            hidden: settings.hidden,
         },
     }
 }
@@ -122,6 +125,7 @@ pub fn save_setup(app: AppHandle, choices: SetupChoices) -> Result<(), String> {
             clipboard_max_items: choices.clipboard_max_items,
             clipboard_max_days: choices.clipboard_max_days,
             extra_folders: choices.extra_folders,
+            hidden: choices.hidden,
             setup_done: true,
             ..std::mem::take(settings)
         }

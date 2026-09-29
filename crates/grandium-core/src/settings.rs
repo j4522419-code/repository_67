@@ -43,6 +43,15 @@ impl Theme {
     }
 }
 
+/// Something hidden from search results, like an app never wanted there.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HiddenItem {
+    /// The result's ID, like `app:<id>` or `file:<path>`.
+    pub key: String,
+    /// What it's called, for showing in settings.
+    pub name: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
@@ -65,6 +74,8 @@ pub struct Settings {
     /// Folders file search looks in besides Desktop, Documents and
     /// Downloads.
     pub extra_folders: Vec<String>,
+    /// Never shown in search results.
+    pub hidden: Vec<HiddenItem>,
 }
 
 impl Default for Settings {
@@ -80,6 +91,7 @@ impl Default for Settings {
             clipboard_max_items: 500,
             clipboard_max_days: 30,
             extra_folders: Vec::new(),
+            hidden: Vec::new(),
         }
     }
 }
@@ -105,7 +117,23 @@ impl Settings {
             seen.push(key);
             new
         });
+        let mut seen = Vec::new();
+        self.hidden.retain(|item| {
+            let new = !seen.contains(&item.key);
+            seen.push(item.key.clone());
+            new
+        });
         self
+    }
+
+    /// Hides a result from now on (once, however often it's asked).
+    pub fn hide(&mut self, key: &str, name: &str) {
+        if !self.hidden.iter().any(|item| item.key == key) {
+            self.hidden.push(HiddenItem {
+                key: key.to_string(),
+                name: name.to_string(),
+            });
+        }
     }
 
     pub fn clipboard_limits(&self) -> Limits {
@@ -149,6 +177,10 @@ mod tests {
             clipboard_max_items: 2000,
             clipboard_max_days: 365,
             extra_folders: vec![r"D:\Projects".into()],
+            hidden: vec![HiddenItem {
+                key: "app:Microsoft.Edge".into(),
+                name: "Microsoft Edge".into(),
+            }],
         };
         let json = serde_json::to_string(&settings).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), settings);
@@ -173,6 +205,18 @@ mod tests {
         assert_eq!(settings.clipboard_max_items, 500);
         assert_eq!(settings.clipboard_max_days, 30);
         assert_eq!(settings.extra_folders, [r"D:\Projects", r"E:\Music"]);
+    }
+
+    #[test]
+    fn hides_things_once() {
+        let mut settings = Settings::default();
+        settings.hide("app:x", "X");
+        settings.hide("app:x", "X again");
+        settings.hide("file:C:\\a.txt", "a.txt");
+        assert_eq!(settings.hidden.len(), 2);
+        assert_eq!(settings.hidden[0].name, "X");
+        settings.hidden.push(settings.hidden[0].clone());
+        assert_eq!(settings.cleaned().hidden.len(), 2);
     }
 
     #[test]

@@ -42,29 +42,42 @@ a Linux build environment.
 
 ## 2. What using it looks like
 
+Styled after macOS Spotlight: a big search bar, results in sections under a
+Top Hit, and the selected row filled with blue.
+
 ```
-              Alt+Space
-┌────────────────────────────────────────┐
-│ 🔍  budg█                              │
-├────────────────────────────────────────┤
-│ ▸ 📊 Budget 2026.xlsx      Documents    │   ← file
-│   📋 "budget meeting 3pm"  Copied 2h    │   ← clipboard
-│   📝 Budget ideas          Note         │   ← note
-│   🧮 = 1200*12 → 14,400    Enter copies │   ← calculator
-│   🟩 Excel                 App          │   ← app
-└────────────────────────────────────────┘
-  ↑↓ move · Enter open · Tab actions · Esc close
+             Alt+Space
+┌────────────────────────────────────────────────────┐
+│ 🔍  budg█                         ▦  📄  📋  ❝  🗒  / │
+├────────────────────────────────────────────────────┤
+│ Top Hit                                            │
+│ ▌📊 Budget 2026.xlsx   Documents        Open ↵ ▐   │
+│ Snippets                                           │
+│   ❝ ;budget          Monthly budget: …             │
+│ Notes                                              │
+│   🗒 Budget ideas      2 h ago                      │
+│ Search the web                                     │
+│   🌐 Search Google for “budg”                      │
+└────────────────────────────────────────────────────┘
 ```
 
-### Keyboard
+The buttons on the right of the bar show everything of one kind: Apps, Files,
+Clipboard, Snippets, Notes, and every command. The chosen kind shows as a pill
+in the bar (typing `/files ` does the same); Backspace takes it away.
+
+### Keyboard and mouse
 | Key | What it does |
 |---|---|
-| `Alt+Space` | Show or hide Grandium |
+| `Alt+Space` | Show or hide Grandium (another hotkey can be picked in Settings) |
 | `↑` / `↓` | Move through results |
 | `Enter` | Main action (open, launch, paste, copy) |
 | `Ctrl+Enter` | Second action (open file location, copy only, …) |
-| `Tab` | Menu of every action for the selected result |
-| `Esc` | Cancel a confirmation, clear the text if there is any, otherwise hide |
+| `Tab` or right-click | Menu of every action for the selected result |
+| `Ctrl+1` … `Ctrl+6` | The buttons: Apps, Files, Clipboard, Snippets, Notes, Commands |
+| `Ctrl+H` | Hide the result from Grandium (bring it back in Settings) |
+| `Esc` | Cancel a confirmation, clear the text, remove the pill, otherwise hide |
+
+Hovering never changes the selection; clicking a row runs it.
 
 ### Slash commands (optional; plain typing searches everything)
 Type `/` to see them all; Tab or Enter picks one.
@@ -77,6 +90,7 @@ Type `/` to see them all; Tab or Enter picks one.
 | `/run` | Runs anything, like Win+R. Paths, `%temp%`-style variables, `shell:` links and program names like `regedit` also work without it. |
 | `/system` `/sys` | System commands |
 | `/clip` | Clipboard history (M3) |
+| `/apps` | Every installed app, A to Z; typing narrows it down. |
 | `/files` `/f` | Files and folders only. On its own, it lists your most recently changed files. |
 | `;addr` or `/snip` | Snippets: `;addr` + Enter pastes the snippet with the keyword `addr`. `/snip` on its own lists them all. |
 | `/note` `/n` | `/note buy milk` + Enter saves a note. `/note` on its own lists your notes, newest first. |
@@ -182,7 +196,10 @@ Type `/` to see them all; Tab or Enter picks one.
   - the hotkey,
   - the theme (like Windows, light or dark),
   - how much clipboard history is kept (100–2,000 items, 1 day–1 year),
-  - extra folders for file search.
+  - extra folders for file search,
+  - what's been hidden from Grandium, with **Show again** for each.
+- Any app, file, folder or system command can be hidden from results
+  (right-click or Tab → **Hide from Grandium**, or Ctrl+H).
 - Snippets are managed from the launcher itself (`/snip`), and notes are
   files in the notes folder.
 - The first-run screen explains the hotkey, `/`, `;`, `=` and Tab.
