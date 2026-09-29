@@ -11,9 +11,9 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState};
 
-use crate::apps;
 use crate::platform::clipboard::foreground_window;
 use crate::settings::SettingsStore;
+use crate::{apps, platform};
 
 /// Label of the launcher window in `tauri.conf.json`.
 const LABEL: &str = "launcher";
@@ -69,7 +69,8 @@ pub fn status(app: &AppHandle) -> AppStatus {
             .lock()
             .unwrap()
             .clone(),
-        setup_needed: !app.state::<SettingsStore>().get().setup_done,
+        setup_needed: !app.state::<SettingsStore>().get().setup_done
+            || platform::installer::setup_requested(),
     }
 }
 

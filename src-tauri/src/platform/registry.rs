@@ -3,8 +3,8 @@
 use windows::core::{HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Foundation::ERROR_SUCCESS;
 use windows::Win32::System::Registry::{
-    RegCloseKey, RegEnumKeyExW, RegGetValueW, RegOpenKeyExW, HKEY, KEY_READ, RRF_RT_REG_DWORD,
-    RRF_RT_REG_SZ,
+    RegCloseKey, RegDeleteKeyValueW, RegEnumKeyExW, RegGetValueW, RegOpenKeyExW, HKEY, KEY_READ,
+    RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
 };
 
 pub use windows::Win32::System::Registry::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
@@ -66,6 +66,13 @@ pub fn read_dword(root: HKEY, key: &str, value: &str) -> Option<u32> {
         )
     };
     (found == ERROR_SUCCESS).then_some(data)
+}
+
+/// Deletes a value; nothing happens if it isn't there.
+pub fn delete_value(root: HKEY, key: &str, value: &str) {
+    unsafe {
+        let _ = RegDeleteKeyValueW(root, &HSTRING::from(key), &HSTRING::from(value));
+    }
 }
 
 /// The names of a key's subkeys; empty if the key doesn't exist.

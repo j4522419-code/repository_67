@@ -163,7 +163,8 @@ Type `/` to see them all; Tab or Enter picks one.
   (Ctrl+Delete, asks first).
 
 ### First-run setup
-- On first run (and later from the tray's **Settings…**) you choose:
+- On first run, after every install or update (the installer asks Grandium
+  to), and later from the tray's **Settings…**, you choose:
   - the **browser** web searches and links open in (any installed browser,
     or Windows' default),
   - the **search engine** for everyday web searches (Google, Bing,

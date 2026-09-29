@@ -73,4 +73,5 @@ pub fn save_setup(app: AppHandle, choices: SetupChoices) {
             .to_string();
         settings.setup_done = true;
     });
+    platform::installer::clear_setup_request();
 }

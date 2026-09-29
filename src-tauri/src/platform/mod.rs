@@ -2,6 +2,7 @@
 
 mod browsers;
 pub mod clipboard;
+pub mod installer;
 pub mod locale;
 mod power;
 mod programs;
