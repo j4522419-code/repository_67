@@ -5,10 +5,12 @@
 compile_error!("Grandium is a Windows app.");
 
 mod apps;
+mod files;
 mod icons;
 mod launcher;
 mod platform;
 mod search;
+mod settings;
 mod tray;
 
 use tauri::Manager;
@@ -31,7 +33,6 @@ fn main() {
             icons::SCHEME,
             move |_ctx, request, responder| icon_server.handle(request, responder),
         )
-        .manage(launcher::LauncherState::default())
         .manage(apps::AppIndex::default())
         .invoke_handler(tauri::generate_handler![
             launcher::app_status,
@@ -42,18 +43,18 @@ fn main() {
         ])
         .on_window_event(launcher::on_window_event)
         .setup(|app| {
-            let usage_file = app
-                .path()
-                .data_dir()
-                .ok()
-                .map(|dir| dir.join("Grandium").join("usage.json"));
-            app.manage(search::SearchState::load(usage_file));
+            let handle = app.handle();
+            let data = files::data_dir(handle);
+            let file = |name: &str| data.as_ref().map(|dir| dir.join(name));
+            app.manage(settings::SettingsStore::load(file("settings.json")));
+            app.manage(search::SearchState::load(file("usage.json")));
+            app.manage(launcher::LauncherState::new(handle));
 
-            let app = app.handle();
-            launcher::register_hotkey(app);
-            tray::create(app)?;
+            let settings = app.state::<settings::SettingsStore>().get();
+            launcher::apply_open_with(handle, settings.open_with);
+            tray::create(handle)?;
             // Show the launcher once at startup so it's clear Grandium is running.
-            launcher::show(app);
+            launcher::show(handle);
             Ok(())
         })
         .run(tauri::generate_context!())

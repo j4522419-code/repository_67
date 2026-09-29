@@ -16,7 +16,7 @@ data on your PC.
 |---|---|
 | Name | **Grandium** |
 | Target OS | **Windows 11** (x64) |
-| Hotkey | **Alt+Space**, changeable in settings. The Windows key stays as it is. |
+| Hotkey | **Alt+Space** by default. The tray menu offers Alt+Space, the Windows key on its own, or both. With the Windows key, Start is still on Ctrl+Esc. |
 | Mouse | Hovering never changes the selection; only the arrow keys do. Clicking a row still runs it. |
 | v1 scope | Apps, calculator, web search, system commands, clipboard history, file search, snippets, quick notes, settings |
 | Stack | **Tauri 2**: a Rust backend with a Svelte + TypeScript UI |

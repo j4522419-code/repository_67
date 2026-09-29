@@ -3,6 +3,7 @@
 mod clipboard;
 mod power;
 mod shell;
+pub mod windows_key;
 
 use windows::Win32::System::Com::{
     CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,

@@ -6,8 +6,12 @@ import { previewSearch } from "./preview";
 
 export interface AppStatus {
   version: string;
-  hotkey: string;
+  /** The keys that open Grandium right now, e.g. ["Alt+Space"]. */
+  keys: string[];
+  /** Set when Alt+Space was chosen but another app has it. */
   hotkeyError: string | null;
+  /** Set when the Windows key was chosen but couldn't be used. */
+  windowsKeyError: string | null;
 }
 
 export interface ResultAction {
@@ -36,10 +40,13 @@ const inTauri = "__TAURI_INTERNALS__" in window;
 
 function previewStatus(): AppStatus {
   const params = new URLSearchParams(location.search);
+  const hotkeyError = params.has("hotkeyError") ? "HotKey already registered" : null;
+  const both = params.has("both");
   return {
     version: "dev",
-    hotkey: "Alt+Space",
-    hotkeyError: params.has("hotkeyError") ? "HotKey already registered" : null,
+    keys: [...(hotkeyError ? [] : ["Alt+Space"]), ...(both ? ["Windows key"] : [])],
+    hotkeyError,
+    windowsKeyError: null,
   };
 }
 

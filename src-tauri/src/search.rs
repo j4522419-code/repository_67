@@ -1,7 +1,6 @@
 //! What the search box calls: finding results for what was typed, and
 //! running the action picked for a result.
 
-use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -16,6 +15,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State, WebviewWindow};
 
 use crate::apps::{App, AppIndex};
+use crate::files;
 use crate::launcher;
 use crate::platform::{self, Com, Launch};
 
@@ -32,14 +32,9 @@ impl SearchState {
     /// Loads usage history from `usage_file`, starting fresh if it's
     /// missing or unreadable.
     pub fn load(usage_file: Option<PathBuf>) -> Self {
-        let usage = usage_file
-            .as_ref()
-            .and_then(|path| fs::read_to_string(path).ok())
-            .and_then(|json| serde_json::from_str(&json).ok())
-            .unwrap_or_default();
         Self {
             ranker: Mutex::default(),
-            usage: Mutex::new(usage),
+            usage: Mutex::new(files::load_json(usage_file.as_deref())),
             usage_file,
         }
     }
@@ -49,20 +44,9 @@ impl SearchState {
         usage.record(key, unix_now());
         if let Some(path) = &self.usage_file {
             // Losing usage history isn't worth bothering anyone about.
-            let _ = save_json(path, &*usage);
+            let _ = files::save_json(path, &*usage);
         }
     }
-}
-
-/// Writes to a temporary file first, so a crash mid-write can't leave a
-/// half-written file behind.
-fn save_json(path: &PathBuf, value: &impl Serialize) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
-    }
-    let temp = path.with_extension("json.tmp");
-    fs::write(&temp, serde_json::to_vec(value)?)?;
-    fs::rename(temp, path)
 }
 
 fn unix_now() -> u64 {

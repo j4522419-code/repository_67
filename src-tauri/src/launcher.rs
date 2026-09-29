@@ -1,18 +1,20 @@
 //! The launcher window: the global hotkey, showing and hiding, and placement.
 
+use std::sync::mpsc::{self, Sender};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use grandium_core::layout::{launcher_origin, Rect};
+use grandium_core::settings::OpenWith;
 use grandium_core::DEFAULT_HOTKEY;
 use serde::Serialize;
 use tauri::{
-    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, State, WebviewWindow, Window,
-    WindowEvent,
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, WebviewWindow, Window, WindowEvent,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState};
 
 use crate::apps;
+use crate::platform::windows_key::{self, WindowsKeyListener};
 
 /// Label of the launcher window in `tauri.conf.json`.
 const LABEL: &str = "launcher";
@@ -23,40 +25,105 @@ const MAX_HEIGHT: f64 = 640.0;
 /// not the user clicking away, so they don't hide it.
 const BLUR_GRACE: Duration = Duration::from_millis(250);
 
-#[derive(Default)]
 pub struct LauncherState {
+    open_with: Mutex<OpenWith>,
+    /// Why Alt+Space couldn't be claimed, if it couldn't.
     hotkey_error: Mutex<Option<String>>,
+    windows_key_error: Mutex<Option<String>>,
+    windows_key: Mutex<Option<WindowsKeyListener>>,
+    /// Where taps of the Windows key arrive.
+    windows_key_taps: Sender<()>,
     shown_at: Mutex<Option<Instant>>,
+}
+
+impl LauncherState {
+    /// Also starts the thread that turns Windows key taps into toggles.
+    pub fn new(app: &AppHandle) -> Self {
+        let (taps, tapped) = mpsc::channel();
+        let app = app.clone();
+        std::thread::spawn(move || {
+            for () in tapped {
+                toggle(&app);
+            }
+        });
+        Self {
+            open_with: Mutex::default(),
+            hotkey_error: Mutex::default(),
+            windows_key_error: Mutex::default(),
+            windows_key: Mutex::default(),
+            windows_key_taps: taps,
+            shown_at: Mutex::default(),
+        }
+    }
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppStatus {
     version: String,
-    hotkey: String,
+    /// The keys that open Grandium right now.
+    pub keys: Vec<&'static str>,
+    /// Set when Alt+Space was chosen but another app has it.
     hotkey_error: Option<String>,
+    /// Set when the Windows key was chosen but couldn't be used.
+    windows_key_error: Option<String>,
 }
 
-/// Registers the global hotkey. On failure (usually another app owns the
-/// same keys) the error is kept so the UI and tray can explain it.
-pub fn register_hotkey(app: &AppHandle) {
-    let result = DEFAULT_HOTKEY
-        .parse::<Shortcut>()
-        .map_err(|e| e.to_string())
-        .and_then(|shortcut| {
-            app.global_shortcut()
-                .register(shortcut)
-                .map_err(|e| e.to_string())
-        });
-    *app.state::<LauncherState>().hotkey_error.lock().unwrap() = result.err();
+/// Claims the keys chosen in settings and lets go of the others. Problems
+/// (usually another app owning Alt+Space) are kept for the UI and tray.
+pub fn apply_open_with(app: &AppHandle, open_with: OpenWith) {
+    let state = app.state::<LauncherState>();
+    *state.open_with.lock().unwrap() = open_with;
+
+    let shortcut: Shortcut = DEFAULT_HOTKEY.parse().expect("the default hotkey is valid");
+    let shortcuts = app.global_shortcut();
+    let hotkey_error = if !open_with.uses_alt_space() {
+        let _ = shortcuts.unregister(shortcut);
+        None
+    } else if shortcuts.is_registered(shortcut) {
+        None
+    } else {
+        shortcuts.register(shortcut).err().map(|e| e.to_string())
+    };
+    *state.hotkey_error.lock().unwrap() = hotkey_error;
+
+    let mut listener = state.windows_key.lock().unwrap();
+    let mut windows_key_error = None;
+    if !open_with.uses_windows_key() {
+        if let Some(running) = listener.take() {
+            running.stop();
+        }
+    } else if listener.is_none() {
+        match windows_key::start(state.windows_key_taps.clone()) {
+            Ok(started) => *listener = Some(started),
+            Err(error) => windows_key_error = Some(error),
+        }
+    }
+    *state.windows_key_error.lock().unwrap() = windows_key_error;
 }
 
-pub fn hotkey_error(app: &AppHandle) -> Option<String> {
-    app.state::<LauncherState>()
-        .hotkey_error
-        .lock()
-        .unwrap()
-        .clone()
+pub fn status(app: &AppHandle) -> AppStatus {
+    let state = app.state::<LauncherState>();
+    let hotkey_error = state.hotkey_error.lock().unwrap().clone();
+    let windows_key_error = state.windows_key_error.lock().unwrap().clone();
+    let open_with = *state.open_with.lock().unwrap();
+    let keys = open_with
+        .keys()
+        .into_iter()
+        .filter(|&key| {
+            if key == DEFAULT_HOTKEY {
+                hotkey_error.is_none()
+            } else {
+                windows_key_error.is_none()
+            }
+        })
+        .collect();
+    AppStatus {
+        version: app.package_info().version.to_string(),
+        keys,
+        hotkey_error,
+        windows_key_error,
+    }
 }
 
 pub fn on_hotkey(app: &AppHandle, _shortcut: &Shortcut, event: ShortcutEvent) {
@@ -92,7 +159,9 @@ pub fn show(app: &AppHandle) {
     if !window.is_visible().unwrap_or(false) {
         place_on_cursor_monitor(app, &window);
     }
-    *app.state::<LauncherState>().shown_at.lock().unwrap() = Some(Instant::now());
+    if let Some(state) = app.try_state::<LauncherState>() {
+        *state.shown_at.lock().unwrap() = Some(Instant::now());
+    }
     let _ = window.show();
     let _ = window.set_focus();
     let _ = window.emit("launcher-shown", ());
@@ -135,7 +204,9 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
     match event {
         // Clicking anywhere else hides the launcher.
         WindowEvent::Focused(false) => {
-            let state = window.state::<LauncherState>();
+            let Some(state) = window.try_state::<LauncherState>() else {
+                return;
+            };
             let just_shown = state
                 .shown_at
                 .lock()
@@ -155,12 +226,8 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
 }
 
 #[tauri::command]
-pub fn app_status(app: AppHandle, state: State<LauncherState>) -> AppStatus {
-    AppStatus {
-        version: app.package_info().version.to_string(),
-        hotkey: DEFAULT_HOTKEY.to_string(),
-        hotkey_error: state.hotkey_error.lock().unwrap().clone(),
-    }
+pub fn app_status(app: AppHandle) -> AppStatus {
+    status(&app)
 }
 
 #[tauri::command]
