@@ -1,47 +1,73 @@
-//! Opening Grandium with the Windows key on its own.
+//! Opening Grandium with the Windows key on its own, instead of Start.
 //!
 //! Windows has no API for claiming a lone modifier key, so this uses a
-//! low-level keyboard hook, like other launchers do. The hook only tracks
-//! two things: whether the Windows key is down, and whether any other key
-//! was pressed while it was. It doesn't record or keep which keys those
-//! were. A Windows-key press with nothing else in between counts as a tap.
-//! Shortcuts like Win+E are left alone.
+//! low-level keyboard hook, like other launchers and AutoHotkey do. It
+//! treats the Windows key as a "prefix":
 //!
-//! On a tap, only Grandium should open, not the Start menu. Windows opens
-//! Start when the Windows key comes back up with nothing pressed in
-//! between, so the hook holds back that release and sends its own instead:
-//! an unassigned key (0xE8, the usual "mask" key, which no app reacts to)
-//! and then the release. Windows then sees a shortcut rather than a tap and
-//! leaves Start closed. The real release is only held back once the
-//! replacement has been accepted, so the key can't get stuck. (Sending the
-//! mask while the key is still down isn't enough on Windows 11.)
+//! - When the Windows key goes down, the hook holds it back from Windows.
+//! - If it comes back up with nothing pressed in between, that's a tap:
+//!   the release is held back too, so Windows never saw the key at all and
+//!   can't open Start. Grandium opens instead.
+//! - If another key is pressed first, it's a shortcut like Win+E: the hook
+//!   hands Windows the Windows key after all, followed by that key, and
+//!   everything from then on passes through untouched. Win+L is the
+//!   exception: Windows won't lock for a replayed Win+L, so the hook locks
+//!   the PC itself.
+//!
+//! The hook only follows the Windows key; other keys it passes on without
+//! recording them. (Masking the release with a dummy key, the lighter
+//! approach, doesn't keep Start closed on Windows 11.)
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::cell::Cell;
 use std::sync::mpsc::{self, Sender};
 use std::sync::Mutex;
 
 use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::Shutdown::LockWorkStation;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-    KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_LWIN, VK_RWIN,
+    KEYEVENTF_EXTENDEDKEY, VIRTUAL_KEY, VK_LWIN, VK_RWIN,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetMessageW, PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx,
-    HC_ACTION, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_QUIT, WM_SYSKEYDOWN,
+    HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_QUIT,
+    WM_SYSKEYDOWN,
 };
 
 use super::message;
 
-/// An unassigned virtual key code; sending it has no effect in any app.
-const MASK_KEY: VIRTUAL_KEY = VIRTUAL_KEY(0xE8);
-/// Tags the key events we send, so the hook ignores them.
+/// Tags the key events we send, so the hook lets them through.
 const OURS: usize = 0x6772_616E; // "gran"
 
-static WIN_DOWN: AtomicBool = AtomicBool::new(false);
-static OTHER_KEY_PRESSED: AtomicBool = AtomicBool::new(false);
 static ON_TAP: Mutex<Option<Sender<()>>> = Mutex::new(None);
+
+#[derive(Clone, Copy)]
+enum State {
+    Idle,
+    /// The Windows key is down and Windows doesn't know yet.
+    Held {
+        key: u32,
+        scan: u32,
+    },
+    /// The Windows key is part of a shortcut; Windows knows it's down.
+    Shortcut,
+    /// The Windows key was used for Win+L, which Windows never saw; `at` is
+    /// when the hook last saw the key.
+    Locked {
+        at: u32,
+    },
+}
+
+/// Holding a key repeats it at least once a second, so a press that comes
+/// longer than this after the last one is new.
+const NEW_PRESS_MS: u32 = 1500;
+
+thread_local! {
+    // The hook always runs on the thread that installed it.
+    static STATE: Cell<State> = const { Cell::new(State::Idle) };
+}
 
 /// A running listener; `stop` removes the hook.
 pub struct WindowsKeyListener {
@@ -67,7 +93,6 @@ pub fn start(on_tap: Sender<()>) -> Result<WindowsKeyListener, String> {
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).0 > 0 {}
         let _ = UnhookWindowsHookEx(hook);
-        WIN_DOWN.store(false, Ordering::SeqCst);
     });
     let thread_id = started
         .recv()
@@ -86,65 +111,140 @@ impl WindowsKeyListener {
 unsafe extern "system" fn on_key(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 {
         let event = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
-        if event.dwExtraInfo != OURS {
-            let windows_key =
-                event.vkCode == u32::from(VK_LWIN.0) || event.vkCode == u32::from(VK_RWIN.0);
-            let down = matches!(wparam.0 as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
-            match (windows_key, down) {
-                (true, true) => {
-                    // Holding the key repeats this event; act on the first.
-                    if !WIN_DOWN.swap(true, Ordering::SeqCst) {
-                        OTHER_KEY_PRESSED.store(false, Ordering::SeqCst);
-                    }
-                }
-                (true, false) => {
-                    let was_down = WIN_DOWN.swap(false, Ordering::SeqCst);
-                    if was_down && !OTHER_KEY_PRESSED.load(Ordering::SeqCst) {
-                        if let Some(on_tap) = ON_TAP.lock().unwrap().as_ref() {
-                            let _ = on_tap.send(());
-                        }
-                        if release_without_start_menu(event) {
-                            // Our replacement release is on its way.
-                            return LRESULT(1);
-                        }
-                    }
-                }
-                (false, true) => {
-                    if WIN_DOWN.load(Ordering::SeqCst) {
-                        OTHER_KEY_PRESSED.store(true, Ordering::SeqCst);
-                    }
-                }
-                (false, false) => {}
-            }
+        let down = matches!(wparam.0 as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
+        if event.dwExtraInfo != OURS && hold_back(event, down) {
+            return LRESULT(1);
         }
     }
     CallNextHookEx(None, code, wparam, lparam)
 }
 
-/// Sends the mask key and then the Windows key's release. Returns whether
-/// all of it was accepted; only then may the real release be held back.
-unsafe fn release_without_start_menu(release: &KBDLLHOOKSTRUCT) -> bool {
-    let key = |key: VIRTUAL_KEY, scan: u16, flags: KEYBD_EVENT_FLAGS| INPUT {
+/// Follows the Windows key; returns whether to keep this event from
+/// Windows.
+fn hold_back(event: &KBDLLHOOKSTRUCT, down: bool) -> bool {
+    let windows_key = event.vkCode == u32::from(VK_LWIN.0) || event.vkCode == u32::from(VK_RWIN.0);
+    STATE.with(|state| match (state.get(), windows_key, down) {
+        // Wait and see whether this is a tap or a shortcut.
+        (State::Idle, true, true) => {
+            state.set(State::Held {
+                key: event.vkCode,
+                scan: event.scanCode,
+            });
+            true
+        }
+        // Holding the key down repeats it.
+        (State::Held { .. }, true, true) => true,
+        // A tap. Windows never saw the key, so Start stays closed.
+        (State::Held { .. }, true, false) => {
+            state.set(State::Idle);
+            if let Some(on_tap) = ON_TAP.lock().unwrap().as_ref() {
+                let _ = on_tap.send(());
+            }
+            true
+        }
+        (State::Held { .. }, false, true) if event.vkCode == u32::from(b'L') => {
+            state.set(State::Locked { at: event.time });
+            let _ = unsafe { LockWorkStation() };
+            true
+        }
+        // A shortcut: replay the Windows key, then this key. Only if that
+        // worked is the original held back; otherwise it goes through as is.
+        (State::Held { key, scan }, false, true) => {
+            state.set(State::Shortcut);
+            unsafe { replay(key, scan, event) }
+        }
+        (State::Shortcut, true, false) => {
+            state.set(State::Idle);
+            false
+        }
+        // The release after Win+L can happen on the lock screen, out of the
+        // hook's sight; then the next press is a new one.
+        (State::Locked { at }, true, true) => {
+            state.set(if event.time.wrapping_sub(at) > NEW_PRESS_MS {
+                State::Held {
+                    key: event.vkCode,
+                    scan: event.scanCode,
+                }
+            } else {
+                State::Locked { at: event.time }
+            });
+            true
+        }
+        (State::Locked { .. }, true, false) => {
+            state.set(State::Idle);
+            true
+        }
+        _ => false,
+    })
+}
+
+/// Sends the held-back Windows key press, then the key pressed with it.
+/// Returns whether both were accepted.
+unsafe fn replay(windows_key: u32, windows_scan: u32, pressed: &KBDLLHOOKSTRUCT) -> bool {
+    let key = |key: u32, scan: u32, extended: bool| INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
             ki: KEYBDINPUT {
-                wVk: key,
-                wScan: scan,
-                dwFlags: flags,
+                wVk: VIRTUAL_KEY(key as u16),
+                wScan: scan as u16,
+                dwFlags: if extended {
+                    KEYEVENTF_EXTENDEDKEY
+                } else {
+                    KEYBD_EVENT_FLAGS(0)
+                },
                 time: 0,
                 dwExtraInfo: OURS,
             },
         },
     };
-    let windows_key = VIRTUAL_KEY(release.vkCode as u16);
     let inputs = [
-        key(MASK_KEY, 0, KEYBD_EVENT_FLAGS(0)),
-        key(MASK_KEY, 0, KEYEVENTF_KEYUP),
+        key(windows_key, windows_scan, true),
         key(
-            windows_key,
-            release.scanCode as u16,
-            KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY,
+            pressed.vkCode,
+            pressed.scanCode,
+            pressed.flags.contains(LLKHF_EXTENDED),
         ),
     ];
     SendInput(&inputs, size_of::<INPUT>() as i32) as usize == inputs.len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::UI::Input::KeyboardAndMouse::VK_A;
+
+    fn key(key: VIRTUAL_KEY, time: u32) -> KBDLLHOOKSTRUCT {
+        KBDLLHOOKSTRUCT {
+            vkCode: u32::from(key.0),
+            time,
+            ..Default::default()
+        }
+    }
+
+    /// Replaying shortcuts and locking need a real desktop, so this covers
+    /// taps: Windows never sees the key, and Grandium hears about it once.
+    #[test]
+    fn taps_are_kept_from_windows() {
+        let (on_tap, taps) = mpsc::channel();
+        *ON_TAP.lock().unwrap() = Some(on_tap);
+
+        // A release Windows already knows about goes through.
+        assert!(!hold_back(&key(VK_LWIN, 0), false));
+        // Typing goes through.
+        assert!(!hold_back(&key(VK_A, 10), true));
+        assert!(!hold_back(&key(VK_A, 20), false));
+
+        // Press, hold (the key repeats), release.
+        assert!(hold_back(&key(VK_LWIN, 100), true));
+        assert!(hold_back(&key(VK_LWIN, 600), true));
+        assert!(taps.try_recv().is_err(), "opened before the release");
+        assert!(hold_back(&key(VK_LWIN, 650), false));
+        assert!(taps.try_recv().is_ok(), "the tap wasn't reported");
+
+        // The right Windows key too, and afterwards typing is untouched.
+        assert!(hold_back(&key(VK_RWIN, 700), true));
+        assert!(hold_back(&key(VK_RWIN, 750), false));
+        assert!(taps.try_recv().is_ok());
+        assert!(!hold_back(&key(VK_A, 800), true));
+    }
 }
