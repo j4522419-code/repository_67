@@ -18,15 +18,18 @@ const UNINSTALL_KEYS: &[&str] = &[
 ];
 
 /// Everything in Windows' list of installed programs, for this user and for
-/// all users, leaving out the parts Windows itself hides (system
-/// components and updates).
+/// all users, leaving out what Settings hides (system components and
+/// updates) or won't uninstall.
 pub fn installed_programs() -> Vec<InstalledProgram> {
     let mut programs = Vec::new();
     for root in [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER] {
         for list in UNINSTALL_KEYS {
             for entry in registry::subkeys(root, list) {
                 let key = format!(r"{list}\{entry}");
+                // Hidden from Settings, or shown there with Uninstall greyed
+                // out (like Microsoft Edge).
                 let hidden = registry::read_dword(root, &key, "SystemComponent") == Some(1)
+                    || registry::read_dword(root, &key, "NoRemove") == Some(1)
                     || registry::read_string(root, &key, Some("ParentKeyName")).is_some();
                 let name = registry::read_string(root, &key, Some("DisplayName"));
                 let command = registry::read_string(root, &key, Some("UninstallString"));
