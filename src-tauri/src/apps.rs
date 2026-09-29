@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
+use grandium_core::apps;
 use tauri::{AppHandle, Manager};
 
 use crate::platform::{self, Com};
@@ -73,15 +74,15 @@ fn to_apps(found: Vec<platform::ShellApp>) -> Vec<App> {
     let mut seen = HashSet::new();
     found
         .into_iter()
-        .filter(|app| grandium_core::apps::is_app(&app.name, app.target.as_deref()))
+        .map(|app| App {
+            key: format!("app:{}", app.id),
+            target: app.target.as_deref().and_then(apps::clean_target),
+            id: app.id,
+            name: app.name,
+        })
+        .filter(|app| apps::is_app(&app.name, app.target.as_deref()))
         // The same app can be listed twice (e.g. shortcuts for all users
         // and for just you).
         .filter(|app| seen.insert((app.name.to_lowercase(), app.target.clone())))
-        .map(|app| App {
-            key: format!("app:{}", app.id),
-            id: app.id,
-            name: app.name,
-            target: app.target,
-        })
         .collect()
 }

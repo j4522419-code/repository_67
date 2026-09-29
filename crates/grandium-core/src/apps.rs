@@ -16,10 +16,22 @@ pub fn is_app(name: &str, target: Option<&str>) -> bool {
     !matches!(extension, Some(ext) if DOCUMENT_EXTENSIONS.contains(&ext.as_str()))
 }
 
+/// Tidies a shortcut target as the shell reports it; some come wrapped in
+/// quotes, like `"C:\Windows\System32\cmd.exe"`.
+pub fn clean_target(target: &str) -> Option<String> {
+    let target = target.trim().trim_matches('"').trim();
+    (!target.is_empty()).then(|| target.to_string())
+}
+
 /// Whether the entry can be started with administrator rights (only
-/// regular desktop programs can).
+/// programs and scripts can, not Store apps or links).
 pub fn can_run_as_admin(target: Option<&str>) -> bool {
-    target.is_some_and(|t| t.to_ascii_lowercase().ends_with(".exe"))
+    target.is_some_and(|t| {
+        let t = t.to_ascii_lowercase();
+        [".exe", ".bat", ".cmd", ".msc"]
+            .iter()
+            .any(|ext| t.ends_with(ext))
+    })
 }
 
 /// Whether the entry points at a file on disk (as opposed to a Store app
@@ -62,9 +74,23 @@ mod tests {
     }
 
     #[test]
-    fn run_as_admin_needs_an_exe() {
+    fn cleans_quoted_targets() {
+        assert_eq!(
+            clean_target(r#""C:\Windows\System32\cmd.exe""#).as_deref(),
+            Some(r"C:\Windows\System32\cmd.exe")
+        );
+        assert_eq!(
+            clean_target(r"C:\Tools\a.exe").as_deref(),
+            Some(r"C:\Tools\a.exe")
+        );
+        assert_eq!(clean_target(r#" "" "#), None);
+    }
+
+    #[test]
+    fn run_as_admin_needs_a_program() {
         assert!(can_run_as_admin(Some(r"C:\Windows\System32\cmd.exe")));
         assert!(can_run_as_admin(Some(r"C:\Tools\APP.EXE")));
+        assert!(can_run_as_admin(Some(r"C:\Strawberry\perl\bin\cpan.bat")));
         assert!(!can_run_as_admin(None));
         assert!(!can_run_as_admin(Some(r"C:\Foo\site.url")));
     }
