@@ -1,5 +1,5 @@
-//! Windows shell integration: finding installed apps, starting them and
-//! reading their icons.
+//! The Windows shell: finding installed apps, starting them, reading
+//! their icons, and opening links.
 //!
 //! Apps come from the shell's "AppsFolder", the same list as the Start
 //! menu's "All apps". It covers regular programs and Store apps alike, and
@@ -9,47 +9,24 @@ use std::os::windows::process::CommandExt;
 use std::process::Command;
 
 use windows::core::{w, Interface, GUID, HSTRING, PCWSTR, PWSTR};
+
 use windows::Win32::Foundation::{ERROR_CANCELLED, SIZE};
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetObjectW, BITMAP, BITMAPINFO,
     BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP,
 };
 use windows::Win32::Storage::EnhancedStorage::PKEY_Link_TargetParsingPath;
-use windows::Win32::System::Com::{
-    CoInitializeEx, CoTaskMemFree, CoUninitialize, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
-};
+use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::UI::Shell::{
     BHID_EnumItems, FOLDERID_AppsFolder, IEnumShellItems, IShellItem, IShellItem2,
     IShellItemImageFactory, SHCreateItemFromParsingName, SHGetKnownFolderItem,
-    SHGetKnownFolderPath, ShellExecuteExW, KF_FLAG_DEFAULT, SEE_MASK_FLAG_NO_UI,
+    SHGetKnownFolderPath, ShellExecuteExW, ShellExecuteW, KF_FLAG_DEFAULT, SEE_MASK_FLAG_NO_UI,
     SEE_MASK_INVOKEIDLIST, SEE_MASK_NOASYNC, SHELLEXECUTEINFOW, SIGDN_NORMALDISPLAY,
     SIGDN_PARENTRELATIVEPARSING, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY,
 };
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
-/// Keeps COM initialized on the current thread while alive; the shell
-/// APIs below need it.
-pub struct Com {
-    initialized: bool,
-}
-
-impl Com {
-    pub fn init() -> Self {
-        let result =
-            unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) };
-        Self {
-            initialized: result.is_ok(),
-        }
-    }
-}
-
-impl Drop for Com {
-    fn drop(&mut self) {
-        if self.initialized {
-            unsafe { CoUninitialize() };
-        }
-    }
-}
+use super::message;
 
 /// An installed app, as the shell lists it.
 pub struct ShellApp {
@@ -131,10 +108,6 @@ fn app_path(id: &str) -> HSTRING {
     HSTRING::from(format!("shell:AppsFolder\\{id}"))
 }
 
-fn message(error: windows::core::Error) -> String {
-    error.message()
-}
-
 #[derive(Clone, Copy)]
 pub enum Launch {
     Normal,
@@ -172,6 +145,26 @@ pub fn show_in_explorer(path: &str) -> Result<(), String> {
         .spawn()
         .map(drop)
         .map_err(|e| e.to_string())
+}
+
+/// Opens a web address in the default browser.
+pub fn open_url(url: &str) -> Result<(), String> {
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            w!("open"),
+            &HSTRING::from(url),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    // Values above 32 mean success.
+    if result.0 as isize > 32 {
+        Ok(())
+    } else {
+        Err("Couldn't open your web browser.".into())
+    }
 }
 
 /// The app's icon as a PNG, `size` pixels square (or close to it).
@@ -237,6 +230,7 @@ unsafe fn bitmap_to_png(bitmap: HBITMAP) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::platform::Com;
 
     /// Runs against the real shell of the machine running the tests (a
     /// GitHub Windows runner in CI) and prints what it finds.

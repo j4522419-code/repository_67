@@ -6,6 +6,7 @@ edition.workspace = true
 
 [dependencies]
 nucleo-matcher = "0.3"
+percent-encoding = "2"
 png = "0.17"
 serde = { version = "1", features = ["derive"] }
 unicode-segmentation = "1"

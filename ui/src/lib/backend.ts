@@ -14,14 +14,18 @@ export interface ResultAction {
   id: string;
   label: string;
   shortcut: string | null;
+  /** When set, ask this question before running the action. */
+  confirm: string | null;
 }
 
 export interface SearchResult {
   id: string;
   title: string;
   kind: string;
-  /** Key for the `icon` URL scheme, see `iconUrl`. */
+  /** An app icon: key for the `icon` URL scheme, see `iconUrl`. */
   icon: string | null;
+  /** A built-in icon by name, for results that aren't apps. */
+  glyph: string | null;
   /** `[start, end)` ranges of `title` to highlight. */
   highlights: [number, number][];
   /** The first action is what Enter does. */

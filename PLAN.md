@@ -6,7 +6,7 @@ the web, run system commands, get back anything you copied, paste saved snippets
 and jot down quick notes. It runs in the tray, starts with Windows and keeps all
 data on your PC.
 
-*Status: M0 (foundation) and M1 (app search) built, waiting for testing on Windows. Last updated 2026-09-29.*
+*Status: M0 (foundation), M1 (app search) and M2 (calculator, web search, system commands) built, waiting for testing on Windows. Last updated 2026-09-29.*
 
 ---
 
@@ -16,7 +16,8 @@ data on your PC.
 |---|---|
 | Name | **Grandium** |
 | Target OS | **Windows 11** (x64) |
-| Hotkey | **Alt+Space**, changeable in settings |
+| Hotkey | **Alt+Space**, changeable in settings. The Windows key stays as it is. |
+| Mouse | Hovering never changes the selection; only the arrow keys do. Clicking a row still runs it. |
 | v1 scope | Apps, calculator, web search, system commands, clipboard history, file search, snippets, quick notes, settings |
 | Stack | **Tauri 2**: a Rust backend with a Svelte + TypeScript UI |
 | Delivery | GitHub Actions builds the `.exe` on Windows; tagged versions become GitHub Releases |
@@ -63,7 +64,7 @@ a Linux build environment.
 | `Enter` | Main action (open, launch, paste, copy) |
 | `Ctrl+Enter` | Second action (open file location, copy only, …) |
 | `Tab` | Menu of every action for the selected result |
-| `Esc` | Clear the text if there is any, otherwise hide |
+| `Esc` | Cancel a confirmation, clear the text if there is any, otherwise hide |
 
 ### Prefixes (optional; plain typing searches everything)
 | Prefix | Searches |

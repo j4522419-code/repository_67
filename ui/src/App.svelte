@@ -15,6 +15,8 @@
   /** Showing the actions of the selected result instead of the results. */
   let showActions = $state(false);
   let selectedAction = $state(0);
+  /** An action waiting for Enter again, e.g. Shut down. */
+  let confirming = $state<{ result: SearchResult; action: ResultAction } | null>(null);
   let error = $state<string | null>(null);
   let status = $state<AppStatus | null>(null);
   let input = $state<HTMLInputElement>();
@@ -34,11 +36,18 @@
     results = found;
     selected = 0;
     showActions = false;
+    confirming = null;
     error = null;
   }
 
   async function run(result: SearchResult, action: ResultAction) {
     error = null;
+    const confirmed = confirming?.result.id === result.id && confirming.action.id === action.id;
+    if (action.confirm && !confirmed) {
+      confirming = { result, action };
+      return;
+    }
+    confirming = null;
     try {
       await backend.runAction(result.id, action.id);
       query = "";
@@ -48,6 +57,7 @@
   }
 
   function move(delta: number) {
+    confirming = null;
     if (showActions && current) {
       const count = current.actions.length;
       selectedAction = (selectedAction + delta + count) % count;
@@ -58,6 +68,7 @@
 
   function toggleActions() {
     if (!current) return;
+    confirming = null;
     showActions = !showActions;
     selectedAction = 0;
   }
@@ -82,6 +93,10 @@
         break;
       case "Enter": {
         event.preventDefault();
+        if (confirming) {
+          run(confirming.result, confirming.action);
+          break;
+        }
         if (!current) break;
         const action = showActions ? current.actions[selectedAction] : actionFor(event, current);
         if (action) run(current, action);
@@ -89,7 +104,8 @@
       }
       case "Escape":
         event.preventDefault();
-        if (showActions) showActions = false;
+        if (confirming) confirming = null;
+        else if (showActions) showActions = false;
         else if (query) query = "";
         else backend.hide();
         break;
@@ -145,7 +161,8 @@
     </div>
   {/if}
 
-  <!-- Mouse clicks shouldn't take the keyboard focus away from the search box. -->
+  <!-- Only the keyboard moves the selection; hovering doesn't. Clicking a
+       row runs it without taking focus away from the search box. -->
   <div id="results" class="results" onmousedown={(e) => e.preventDefault()} role="presentation">
     {#if showActions && current}
       <div class="heading">Actions for {current.title}</div>
@@ -155,7 +172,6 @@
           tabindex="-1"
           class="row"
           class:selected={i === selectedAction}
-          onmousemove={() => (selectedAction = i)}
           onclick={() => run(current, action)}
         >
           <span class="title">{action.label}</span>
@@ -169,11 +185,11 @@
           tabindex="-1"
           class="row"
           class:selected={i === selected}
-          onmousemove={() => (selected = i)}
           onclick={() => run(result, result.actions[0])}
         >
           <ResultIcon
             src={result.icon ? backend.iconUrl(result.icon) : null}
+            glyph={result.glyph}
             title={result.title}
           />
           <span class="title"><Highlighted text={result.title} ranges={result.highlights} /></span>
@@ -187,19 +203,28 @@
     {/if}
   </div>
 
+  {#if confirming}
+    <div class="notice warning" role="alert">
+      <strong>{confirming.action.confirm}</strong>
+      Press <kbd>Enter</kbd> again to confirm, or <kbd>Esc</kbd> to cancel.
+    </div>
+  {/if}
+
   {#if error}
     <div class="notice error" role="alert">{error}</div>
   {/if}
 
   <footer>
-    {#if results.length}
+    {#if confirming}
+      <span><kbd>↵</kbd> {confirming.action.label}</span>
+    {:else if results.length}
       <span><kbd>↑</kbd><kbd>↓</kbd> select · <kbd>↵</kbd> open · <kbd>Tab</kbd> actions</span>
     {:else if status?.hotkeyError}
       <span>Grandium keeps running in the tray</span>
     {:else}
       <span>Press <kbd>{status?.hotkey ?? "Alt+Space"}</kbd> anytime to open Grandium</span>
     {/if}
-    <span><kbd>Esc</kbd> {showActions ? "back" : "close"}</span>
+    <span><kbd>Esc</kbd> {confirming ? "cancel" : showActions ? "back" : "close"}</span>
   </footer>
 </main>
 
