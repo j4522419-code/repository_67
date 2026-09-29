@@ -7,10 +7,14 @@
 //! were. A Windows-key press with nothing else in between counts as a tap.
 //! Shortcuts like Win+E are left alone.
 //!
-//! To stop the Start menu from also opening on a tap, the hook sends an
-//! unassigned key code (0xE8, the usual "mask" key) while the Windows key
-//! is down, so Windows treats the press as a shortcut. Nothing is ever
-//! blocked, so no key can get stuck.
+//! On a tap, only Grandium should open, not the Start menu. Windows opens
+//! Start when the Windows key comes back up with nothing pressed in
+//! between, so the hook holds back that release and sends its own instead:
+//! an unassigned key (0xE8, the usual "mask" key, which no app reacts to)
+//! and then the release. Windows then sees a shortcut rather than a tap and
+//! leaves Start closed. The real release is only held back once the
+//! replacement has been accepted, so the key can't get stuck. (Sending the
+//! mask while the key is still down isn't enough on Windows 11.)
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
@@ -20,8 +24,8 @@ use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
-    VIRTUAL_KEY, VK_LWIN, VK_RWIN,
+    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+    KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_LWIN, VK_RWIN,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetMessageW, PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx,
@@ -32,7 +36,7 @@ use super::message;
 
 /// An unassigned virtual key code; sending it has no effect in any app.
 const MASK_KEY: VIRTUAL_KEY = VIRTUAL_KEY(0xE8);
-/// Tags the mask key events we send, so the hook ignores them.
+/// Tags the key events we send, so the hook ignores them.
 const OURS: usize = 0x6772_616E; // "gran"
 
 static WIN_DOWN: AtomicBool = AtomicBool::new(false);
@@ -91,7 +95,6 @@ unsafe extern "system" fn on_key(code: i32, wparam: WPARAM, lparam: LPARAM) -> L
                     // Holding the key repeats this event; act on the first.
                     if !WIN_DOWN.swap(true, Ordering::SeqCst) {
                         OTHER_KEY_PRESSED.store(false, Ordering::SeqCst);
-                        send_mask_key();
                     }
                 }
                 (true, false) => {
@@ -99,6 +102,10 @@ unsafe extern "system" fn on_key(code: i32, wparam: WPARAM, lparam: LPARAM) -> L
                     if was_down && !OTHER_KEY_PRESSED.load(Ordering::SeqCst) {
                         if let Some(on_tap) = ON_TAP.lock().unwrap().as_ref() {
                             let _ = on_tap.send(());
+                        }
+                        if release_without_start_menu(event) {
+                            // Our replacement release is on its way.
+                            return LRESULT(1);
                         }
                     }
                 }
@@ -114,19 +121,30 @@ unsafe extern "system" fn on_key(code: i32, wparam: WPARAM, lparam: LPARAM) -> L
     CallNextHookEx(None, code, wparam, lparam)
 }
 
-unsafe fn send_mask_key() {
-    let key = |flags: KEYBD_EVENT_FLAGS| INPUT {
+/// Sends the mask key and then the Windows key's release. Returns whether
+/// all of it was accepted; only then may the real release be held back.
+unsafe fn release_without_start_menu(release: &KBDLLHOOKSTRUCT) -> bool {
+    let key = |key: VIRTUAL_KEY, scan: u16, flags: KEYBD_EVENT_FLAGS| INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
             ki: KEYBDINPUT {
-                wVk: MASK_KEY,
-                wScan: 0,
+                wVk: key,
+                wScan: scan,
                 dwFlags: flags,
                 time: 0,
                 dwExtraInfo: OURS,
             },
         },
     };
-    let inputs = [key(KEYBD_EVENT_FLAGS(0)), key(KEYEVENTF_KEYUP)];
-    SendInput(&inputs, size_of::<INPUT>() as i32);
+    let windows_key = VIRTUAL_KEY(release.vkCode as u16);
+    let inputs = [
+        key(MASK_KEY, 0, KEYBD_EVENT_FLAGS(0)),
+        key(MASK_KEY, 0, KEYEVENTF_KEYUP),
+        key(
+            windows_key,
+            release.scanCode as u16,
+            KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY,
+        ),
+    ];
+    SendInput(&inputs, size_of::<INPUT>() as i32) as usize == inputs.len()
 }
