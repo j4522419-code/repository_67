@@ -6,7 +6,7 @@ the web, run system commands, get back anything you copied, paste saved snippets
 and jot down quick notes. It runs in the tray, starts with Windows and keeps all
 data on your PC.
 
-*Status: M0 (foundation) built and waiting for testing on Windows. Last updated 2026-09-29.*
+*Status: M0 (foundation) and M1 (app search) built, waiting for testing on Windows. Last updated 2026-09-29.*
 
 ---
 

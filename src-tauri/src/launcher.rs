@@ -12,6 +12,8 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState};
 
+use crate::apps;
+
 /// Label of the launcher window in `tauri.conf.json`.
 const LABEL: &str = "launcher";
 /// Logical size limits; the UI picks the height to fit its content.
@@ -76,10 +78,17 @@ fn toggle(app: &AppHandle) {
     }
 }
 
+pub fn hide(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(LABEL) {
+        let _ = window.hide();
+    }
+}
+
 pub fn show(app: &AppHandle) {
     let Some(window) = app.get_webview_window(LABEL) else {
         return;
     };
+    apps::refresh_if_stale(app);
     if !window.is_visible().unwrap_or(false) {
         place_on_cursor_monitor(app, &window);
     }

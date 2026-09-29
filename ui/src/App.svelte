@@ -1,23 +1,104 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { backend, type AppStatus } from "./lib/backend";
+  import {
+    backend,
+    type AppStatus,
+    type ResultAction,
+    type SearchResult,
+  } from "./lib/backend";
+  import Highlighted from "./lib/Highlighted.svelte";
+  import ResultIcon from "./lib/ResultIcon.svelte";
 
   let query = $state("");
+  let results = $state<SearchResult[]>([]);
+  let selected = $state(0);
+  /** Showing the actions of the selected result instead of the results. */
+  let showActions = $state(false);
+  let selectedAction = $state(0);
+  let error = $state<string | null>(null);
   let status = $state<AppStatus | null>(null);
   let input = $state<HTMLInputElement>();
   let root = $state<HTMLElement>();
+  let latestSearch = 0;
+
+  const current = $derived<SearchResult | undefined>(results[selected]);
+
+  $effect(() => {
+    search(query);
+  });
+
+  async function search(text: string) {
+    const id = ++latestSearch;
+    const found = await backend.search(text);
+    if (id !== latestSearch) return; // a newer search already started
+    results = found;
+    selected = 0;
+    showActions = false;
+    error = null;
+  }
+
+  async function run(result: SearchResult, action: ResultAction) {
+    error = null;
+    try {
+      await backend.runAction(result.id, action.id);
+      query = "";
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  function move(delta: number) {
+    if (showActions && current) {
+      const count = current.actions.length;
+      selectedAction = (selectedAction + delta + count) % count;
+    } else if (results.length) {
+      selected = (selected + delta + results.length) % results.length;
+    }
+  }
+
+  function toggleActions() {
+    if (!current) return;
+    showActions = !showActions;
+    selectedAction = 0;
+  }
+
+  /** Enter runs the first action; Ctrl/Shift+Enter run the matching one. */
+  function actionFor(event: KeyboardEvent, result: SearchResult) {
+    const keys = `${event.ctrlKey ? "Ctrl+" : ""}${event.shiftKey ? "Shift+" : ""}Enter`;
+    if (keys === "Enter") return result.actions[0];
+    return result.actions.find((action) => action.shortcut === keys);
+  }
+
+  function onKeydown(event: KeyboardEvent) {
+    switch (event.key) {
+      case "ArrowDown":
+      case "ArrowUp":
+        event.preventDefault();
+        move(event.key === "ArrowDown" ? 1 : -1);
+        break;
+      case "Tab":
+        event.preventDefault();
+        toggleActions();
+        break;
+      case "Enter": {
+        event.preventDefault();
+        if (!current) break;
+        const action = showActions ? current.actions[selectedAction] : actionFor(event, current);
+        if (action) run(current, action);
+        break;
+      }
+      case "Escape":
+        event.preventDefault();
+        if (showActions) showActions = false;
+        else if (query) query = "";
+        else backend.hide();
+        break;
+    }
+  }
 
   function focusInput() {
     input?.focus();
     input?.select();
-  }
-
-  function onKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      if (query) query = "";
-      else backend.hide();
-    }
   }
 
   onMount(() => {
@@ -53,27 +134,72 @@
       spellcheck="false"
       autocomplete="off"
       aria-label="Search"
+      aria-controls="results"
     />
   </div>
 
   {#if status?.hotkeyError}
-    <div class="notice" role="alert">
+    <div class="notice warning" role="alert">
       <strong>{status.hotkey} is taken by another app</strong>
       (PowerToys Run or Command Palette, for example). For now, open Grandium from its tray icon.
     </div>
   {/if}
 
-  {#if query}
-    <div class="empty">Search isn't wired up yet. App search arrives in the next update.</div>
+  <!-- Mouse clicks shouldn't take the keyboard focus away from the search box. -->
+  <div id="results" class="results" onmousedown={(e) => e.preventDefault()} role="presentation">
+    {#if showActions && current}
+      <div class="heading">Actions for {current.title}</div>
+      {#each current.actions as action, i (action.id)}
+        <button
+          type="button"
+          tabindex="-1"
+          class="row"
+          class:selected={i === selectedAction}
+          onmousemove={() => (selectedAction = i)}
+          onclick={() => run(current, action)}
+        >
+          <span class="title">{action.label}</span>
+          {#if action.shortcut}<kbd>{action.shortcut}</kbd>{/if}
+        </button>
+      {/each}
+    {:else if results.length}
+      {#each results as result, i (result.id)}
+        <button
+          type="button"
+          tabindex="-1"
+          class="row"
+          class:selected={i === selected}
+          onmousemove={() => (selected = i)}
+          onclick={() => run(result, result.actions[0])}
+        >
+          <ResultIcon
+            src={result.icon ? backend.iconUrl(result.icon) : null}
+            title={result.title}
+          />
+          <span class="title"><Highlighted text={result.title} ranges={result.highlights} /></span>
+          <span class="meta">
+            {i === selected ? `${result.actions[0].label} ↵` : result.kind}
+          </span>
+        </button>
+      {/each}
+    {:else if query.trim()}
+      <div class="empty">No matches for “{query.trim()}”</div>
+    {/if}
+  </div>
+
+  {#if error}
+    <div class="notice error" role="alert">{error}</div>
   {/if}
 
   <footer>
-    {#if status?.hotkeyError}
+    {#if results.length}
+      <span><kbd>↑</kbd><kbd>↓</kbd> select · <kbd>↵</kbd> open · <kbd>Tab</kbd> actions</span>
+    {:else if status?.hotkeyError}
       <span>Grandium keeps running in the tray</span>
     {:else}
       <span>Press <kbd>{status?.hotkey ?? "Alt+Space"}</kbd> anytime to open Grandium</span>
     {/if}
-    <span><kbd>Esc</kbd> close</span>
+    <span><kbd>Esc</kbd> {showActions ? "back" : "close"}</span>
   </footer>
 </main>
 
@@ -118,6 +244,60 @@
     color: var(--text-tertiary);
   }
 
+  .results {
+    display: flex;
+    flex-direction: column;
+    padding: 0 8px;
+  }
+
+  .results:not(:empty) {
+    padding-bottom: 8px;
+  }
+
+  .heading {
+    padding: 4px 12px 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 48px;
+    padding: 0 12px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: default;
+  }
+
+  .row.selected {
+    background: var(--selected-fill);
+  }
+
+  .title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 15px;
+  }
+
+  .meta {
+    flex: none;
+    font-size: 12px;
+    color: var(--text-tertiary);
+  }
+
+  .row.selected .meta {
+    color: var(--text-secondary);
+  }
+
   .notice,
   .empty {
     margin: 0 12px 10px;
@@ -127,14 +307,17 @@
     line-height: 1.45;
   }
 
-  .notice {
+  .notice.warning {
     background: var(--warning-bg);
-    color: var(--text);
+  }
+
+  .notice.error {
+    background: var(--error-bg);
   }
 
   .empty {
+    margin: 0 4px 2px;
     color: var(--text-secondary);
-    background: var(--subtle-fill);
   }
 
   footer {
@@ -153,5 +336,9 @@
     border: 1px solid var(--divider);
     background: var(--subtle-fill);
     font: inherit;
+  }
+
+  kbd + kbd {
+    margin-left: 2px;
   }
 </style>

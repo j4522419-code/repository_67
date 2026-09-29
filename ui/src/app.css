@@ -8,7 +8,10 @@
   --text-tertiary: rgba(0, 0, 0, 0.45);
   --divider: rgba(0, 0, 0, 0.08);
   --subtle-fill: rgba(0, 0, 0, 0.04);
+  --subtle-fill-strong: rgba(0, 0, 0, 0.08);
+  --selected-fill: rgba(0, 0, 0, 0.06);
   --warning-bg: rgba(255, 185, 0, 0.22);
+  --error-bg: rgba(196, 43, 28, 0.14);
   --accent: #005fb8;
 }
 
@@ -20,7 +23,10 @@
     --text-tertiary: rgba(255, 255, 255, 0.5);
     --divider: rgba(255, 255, 255, 0.08);
     --subtle-fill: rgba(255, 255, 255, 0.06);
+    --subtle-fill-strong: rgba(255, 255, 255, 0.12);
+    --selected-fill: rgba(255, 255, 255, 0.09);
     --warning-bg: rgba(252, 225, 0, 0.16);
+    --error-bg: rgba(255, 153, 164, 0.16);
     --accent: #4cc2ff;
   }
 }
