@@ -161,6 +161,11 @@ pub fn run_command(text: &str, how: Launch) -> Result<(), String> {
     } else {
         run::split_command_line(&expanded)
     };
+    start_program(&file, &args, how)
+}
+
+/// Starts a program (or opens a file, folder or link) with arguments.
+pub fn start_program(file: &str, args: &str, how: Launch) -> Result<(), String> {
     let file = HSTRING::from(file);
     let args = HSTRING::from(args);
     let mut info = SHELLEXECUTEINFOW {

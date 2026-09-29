@@ -10,6 +10,7 @@ pub mod rank;
 pub mod run;
 pub mod settings;
 pub mod system;
+pub mod uninstall;
 pub mod usage;
 pub mod web;
 

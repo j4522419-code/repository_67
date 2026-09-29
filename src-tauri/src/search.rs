@@ -10,11 +10,11 @@ use grandium_core::query::{self, Query, SlashCommand};
 use grandium_core::rank::Ranker;
 use grandium_core::system::{self, Command};
 use grandium_core::usage::Usage;
-use grandium_core::{calc, run, web};
+use grandium_core::{calc, run, uninstall, web};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State, WebviewWindow};
 
-use crate::apps::{App, AppIndex};
+use crate::apps::{App, AppIndex, Uninstall};
 use crate::files;
 use crate::launcher;
 use crate::platform::{self, Com, Launch};
@@ -83,7 +83,7 @@ pub struct ResultAction {
     label: &'static str,
     shortcut: Option<&'static str>,
     /// When set, the UI asks this question before running the action.
-    confirm: Option<&'static str>,
+    confirm: Option<String>,
 }
 
 const fn action(id: &'static str, label: &'static str, shortcut: &'static str) -> ResultAction {
@@ -107,6 +107,19 @@ fn app_result(app: &App, highlights: Vec<[u32; 2]>) -> SearchResult {
             "Run as administrator",
             "Ctrl+Shift+Enter",
         ));
+    }
+    if let Some(how) = &app.uninstall {
+        let what_happens = match how {
+            Uninstall::Program(_) => "This opens its uninstaller.",
+            Uninstall::Package(_) => "It will be removed from this PC.",
+        };
+        actions.push(ResultAction {
+            id: "uninstall",
+            label: "Uninstall",
+            // No shortcut, so it can't happen by accident.
+            shortcut: None,
+            confirm: Some(format!("Uninstall {}? {what_happens}", app.name)),
+        });
     }
     SearchResult {
         id: app.key.clone(),
@@ -165,7 +178,7 @@ fn system_result(command: &'static Command, highlights: Vec<[u32; 2]>) -> Search
         glyph: Some(command.id),
         highlights,
         actions: vec![ResultAction {
-            confirm: command.confirm,
+            confirm: command.confirm.map(String::from),
             ..action("run", command.name, "Enter")
         }],
         ..Default::default()
@@ -331,6 +344,9 @@ async fn run_app_action(app: &AppHandle, id: &str, action: &str) -> Result<(), S
         .state::<AppIndex>()
         .find(id)
         .ok_or("This app doesn't seem to be installed anymore.")?;
+    if action == "uninstall" {
+        return uninstall_app(app, target).await;
+    }
     let action = action.to_string();
     in_background(move || match action.as_str() {
         "open" => platform::launch(&target.id, Launch::Normal),
@@ -344,6 +360,30 @@ async fn run_app_action(app: &AppHandle, id: &str, action: &str) -> Result<(), S
     .await?;
     app.state::<SearchState>().record_use(id);
     Ok(())
+}
+
+async fn uninstall_app(app: &AppHandle, target: App) -> Result<(), String> {
+    let how = target
+        .uninstall
+        .clone()
+        .ok_or("Grandium doesn't know how to uninstall this app.")?;
+    // Uninstallers bring up their own windows, and removing a Store app
+    // takes a moment; either way the launcher should be out of the way.
+    launcher::hide(app);
+    let result = in_background(move || match how {
+        Uninstall::Program(command) => {
+            let (program, args) = uninstall::uninstall_command_line(&command);
+            platform::start_program(&program, &args, Launch::Normal)
+        }
+        Uninstall::Package(full_name) => platform::remove_package(&full_name),
+    })
+    .await;
+    app.state::<AppIndex>().mark_stale();
+    if let Err(error) = &result {
+        launcher::show(app);
+        return Err(format!("Couldn't uninstall {}: {error}", target.name));
+    }
+    result
 }
 
 async fn run_system_command(app: &AppHandle, id: &str) -> Result<(), String> {

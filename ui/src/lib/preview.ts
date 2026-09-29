@@ -23,7 +23,12 @@ const SYSTEM: [id: string, name: string, confirm: string | null][] = [
   ["shutdown", "Shut down", "Shut down your PC now? Unsaved work in open apps may be lost."],
 ];
 
-function action(id: string, label: string, shortcut = "Enter", confirm: string | null = null): ResultAction {
+function action(
+  id: string,
+  label: string,
+  shortcut: string | null = "Enter",
+  confirm: string | null = null,
+): ResultAction {
   return { id, label, shortcut, confirm };
 }
 
@@ -100,6 +105,7 @@ export function previewSearch(query: string): SearchResult[] {
         action("open", "Open"),
         action("openLocation", "Open file location", "Ctrl+Enter"),
         action("runAsAdmin", "Run as administrator", "Ctrl+Shift+Enter"),
+        action("uninstall", "Uninstall", null, `Uninstall ${title}? This opens its uninstaller.`),
       ],
     }));
   }
