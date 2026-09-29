@@ -6,7 +6,7 @@ the web, run system commands, get back anything you copied, paste saved snippets
 and jot down quick notes. It runs in the tray, starts with Windows and keeps all
 data on your PC.
 
-*Status: M0–M5 built (launcher, app search, calculator/web/system commands, clipboard history, file search, snippets and quick notes), plus slash commands, Run-box commands, and uninstalling apps. Waiting for testing on Windows. Last updated 2026-09-29.*
+*Status: M0–M5 built (launcher, app search, calculator/web/system commands, clipboard history, file search, snippets and quick notes), plus slash commands, Run-box commands and uninstalling apps. M6's settings are built; the v1.0 release is next. Last updated 2026-09-29.*
 
 ---
 
@@ -16,7 +16,7 @@ data on your PC.
 |---|---|
 | Name | **Grandium** |
 | Target OS | **Windows 11** (x64) |
-| Hotkey | **Alt+Space**. (Opening it with the Windows key alone was tried and dropped: Windows 11 still opened Start.) |
+| Hotkey | **Alt+Space**, or Ctrl+Space, Ctrl+Alt+Space, Alt+Shift+Space or Ctrl+Shift+Space in Settings. (Opening it with the Windows key alone was tried and dropped: Windows 11 still opened Start.) |
 | Mouse | Hovering never changes the selection; only the arrow keys do. Clicking a row still runs it. |
 | v1 scope | Apps, calculator, web search, system commands, clipboard history, file search, snippets, quick notes, settings |
 | Stack | **Tauri 2**: a Rust backend with a Svelte + TypeScript UI |
@@ -171,17 +171,22 @@ Type `/` to see them all; Tab or Enter picks one.
     DuckDuckGo, Brave Search or Ecosia).
 
 ### App shell and settings
-- Tray icon (Open, Settings, Pause clipboard, Quit), start with Windows, and a
-  single running instance.
-- The settings window covers:
-  - Hotkey
-  - Theme (system, light or dark)
-  - Indexed folders
-  - Web keywords
-  - Clipboard limits
-  - Snippets
-  - Startup
-- A first-run welcome screen explains Alt+Space and the prefixes.
+- Tray icon (Open, Settings, Pause clipboard history, Quit) and a single
+  running instance.
+- **Start with Windows** (asked on the setup screen, on by default): Grandium
+  starts quietly in the tray at sign-in. It's in Task Manager's Startup apps
+  like any other program, and uninstalling removes it.
+- The **Settings** screen (tray → Settings…) covers:
+  - the browser and search engine for web searches,
+  - starting with Windows,
+  - the hotkey,
+  - the theme (like Windows, light or dark),
+  - how much clipboard history is kept (100–2,000 items, 1 day–1 year),
+  - extra folders for file search.
+- Snippets are managed from the launcher itself (`/snip`), and notes are
+  files in the notes folder.
+- The first-run screen explains the hotkey, `/`, `;`, `=` and Tab.
+- Custom web search keywords are planned for after v1.
 
 ---
 
@@ -283,7 +288,7 @@ Each milestone ends with a downloadable `.exe` that you try before we move on.
 
 | Risk | Plan |
 |---|---|
-| Alt+Space is Windows' own shortcut for the window menu, and PowerToys Run / Command Palette use it too | Grandium takes it over. If the hotkey can't be registered, a tray notification says so and you can pick another one. Checked in M0. |
+| Alt+Space is Windows' own shortcut for the window menu, and PowerToys Run / Command Palette use it too | Grandium takes it over. If it can't, the launcher says so and Settings offers four other combinations. |
 | Windows blocks the popup from getting keyboard focus (focus-stealing protection) | Use the standard workarounds launchers rely on. Checked in M0. |
 | SmartScreen warns about an unsigned `.exe` | For now: *More info → Run anyway*. Code signing can be added later. |
 | Antivirus false positives | v1 uses only standard APIs (RegisterHotKey, clipboard listener) and **no keyboard hooks**. |

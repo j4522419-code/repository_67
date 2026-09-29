@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use grandium_core::clipboard::{Content, Entry, History};
+use grandium_core::clipboard::{Content, Entry, History, Limits};
 use grandium_core::image::{self, ClipImage};
 use tauri::http::Request;
 use tauri::{AppHandle, Manager, UriSchemeResponder};
@@ -23,12 +23,14 @@ pub const SCHEME: &str = "clip";
 
 pub struct ClipboardStore {
     history: Mutex<History>,
+    /// How much is kept; from settings.
+    limits: Mutex<Limits>,
     /// `%APPDATA%\Grandium\clipboard`; `None` keeps history in memory only.
     dir: Option<PathBuf>,
 }
 
 impl ClipboardStore {
-    pub fn load(dir: Option<PathBuf>) -> Self {
+    pub fn load(dir: Option<PathBuf>, limits: Limits) -> Self {
         let history = dir
             .as_ref()
             .and_then(|dir| fs::read(dir.join("history.dat")).ok())
@@ -37,10 +39,17 @@ impl ClipboardStore {
             .unwrap_or_default();
         let store = Self {
             history: Mutex::new(history),
+            limits: Mutex::new(limits),
             dir,
         };
-        store.update(|history| history.prune(now()));
+        store.update(|history| history.prune(now(), limits));
         store
+    }
+
+    /// Changes how much is kept, dropping what's now over the limits.
+    pub fn set_limits(&self, limits: Limits) {
+        *self.limits.lock().unwrap() = limits;
+        self.update(|history| history.prune(now(), limits));
     }
 
     /// Reads the history without changing it.
@@ -60,7 +69,8 @@ impl ClipboardStore {
                 Err(_) => return,
             },
         };
-        self.update(|history| history.add(content, now()));
+        let limits = *self.limits.lock().unwrap();
+        self.update(|history| history.add(content, now(), limits));
     }
 
     /// Saves a picture (encrypted) and returns the entry content for it.

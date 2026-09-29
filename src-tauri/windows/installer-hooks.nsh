@@ -9,6 +9,8 @@
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
+  ; Grandium adds itself here when "Start with Windows" is on.
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Grandium"
   DeleteRegValue HKCU "Software\Grandium" "ShowSetup"
   DeleteRegKey /ifempty HKCU "Software\Grandium"
 !macroend

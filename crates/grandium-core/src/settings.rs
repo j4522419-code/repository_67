@@ -2,6 +2,47 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::clipboard::Limits;
+
+/// Key combinations that can open Grandium. Win+Space and friends belong
+/// to Windows, so they aren't offered.
+pub const HOTKEYS: &[&str] = &[
+    "Alt+Space",
+    "Ctrl+Space",
+    "Ctrl+Alt+Space",
+    "Alt+Shift+Space",
+    "Ctrl+Shift+Space",
+];
+
+/// How many clipboard history entries can be kept (pinned ones don't count).
+pub const CLIPBOARD_ITEM_CHOICES: &[usize] = &[100, 500, 1000, 2000];
+/// For how many days clipboard history is kept.
+pub const CLIPBOARD_DAY_CHOICES: &[u32] = &[1, 7, 30, 90, 365];
+
+const DAY: u64 = 24 * 60 * 60;
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Theme {
+    /// Light or dark, like Windows.
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl Theme {
+    pub const ALL: [Theme; 3] = [Theme::System, Theme::Light, Theme::Dark];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Theme::System => "Like Windows",
+            Theme::Light => "Light",
+            Theme::Dark => "Dark",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
@@ -14,6 +55,16 @@ pub struct Settings {
     pub search_engine: String,
     /// Whether the first-run setup has been completed.
     pub setup_done: bool,
+    /// What opens Grandium; one of [`HOTKEYS`].
+    pub hotkey: String,
+    pub theme: Theme,
+    /// Start (quietly, in the tray) when you sign in to Windows.
+    pub start_with_windows: bool,
+    pub clipboard_max_items: usize,
+    pub clipboard_max_days: u32,
+    /// Folders file search looks in besides Desktop, Documents and
+    /// Downloads.
+    pub extra_folders: Vec<String>,
 }
 
 impl Default for Settings {
@@ -23,6 +74,44 @@ impl Default for Settings {
             browser: None,
             search_engine: crate::web::GOOGLE.keyword.to_string(),
             setup_done: false,
+            hotkey: crate::DEFAULT_HOTKEY.to_string(),
+            theme: Theme::System,
+            start_with_windows: true,
+            clipboard_max_items: 500,
+            clipboard_max_days: 30,
+            extra_folders: Vec::new(),
+        }
+    }
+}
+
+impl Settings {
+    /// The settings with anything unknown (a hand-edited file, say) put
+    /// back to the closest thing that works.
+    pub fn cleaned(mut self) -> Self {
+        let defaults = Settings::default();
+        if !HOTKEYS.contains(&self.hotkey.as_str()) {
+            self.hotkey = defaults.hotkey;
+        }
+        if !CLIPBOARD_ITEM_CHOICES.contains(&self.clipboard_max_items) {
+            self.clipboard_max_items = defaults.clipboard_max_items;
+        }
+        if !CLIPBOARD_DAY_CHOICES.contains(&self.clipboard_max_days) {
+            self.clipboard_max_days = defaults.clipboard_max_days;
+        }
+        let mut seen = Vec::new();
+        self.extra_folders.retain(|folder| {
+            let key = folder.trim_end_matches(['\\', '/']).to_lowercase();
+            let new = !folder.trim().is_empty() && !seen.contains(&key);
+            seen.push(key);
+            new
+        });
+        self
+    }
+
+    pub fn clipboard_limits(&self) -> Limits {
+        Limits {
+            max_entries: self.clipboard_max_items,
+            max_age_secs: u64::from(self.clipboard_max_days) * DAY,
         }
     }
 }
@@ -39,6 +128,8 @@ mod tests {
         assert!(settings.setup_done);
         assert!(!settings.clipboard_paused);
         assert_eq!(settings.search_engine, "g");
+        assert_eq!(settings.hotkey, "Alt+Space");
+        assert!(settings.start_with_windows);
         assert_eq!(
             serde_json::from_str::<Settings>("{}").unwrap(),
             Settings::default()
@@ -52,8 +143,52 @@ mod tests {
             browser: Some("Firefox-308046B0AF4A39CB".into()),
             search_engine: "ddg".into(),
             setup_done: true,
+            hotkey: "Ctrl+Space".into(),
+            theme: Theme::Dark,
+            start_with_windows: false,
+            clipboard_max_items: 2000,
+            clipboard_max_days: 365,
+            extra_folders: vec![r"D:\Projects".into()],
         };
         let json = serde_json::to_string(&settings).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), settings);
+    }
+
+    #[test]
+    fn cleans_up_unknown_values() {
+        let settings = Settings {
+            hotkey: "Win+Space".into(),
+            clipboard_max_items: 7,
+            clipboard_max_days: 0,
+            extra_folders: vec![
+                r"D:\Projects".into(),
+                r"d:\projects\".into(),
+                "  ".into(),
+                r"E:\Music".into(),
+            ],
+            ..Settings::default()
+        }
+        .cleaned();
+        assert_eq!(settings.hotkey, "Alt+Space");
+        assert_eq!(settings.clipboard_max_items, 500);
+        assert_eq!(settings.clipboard_max_days, 30);
+        assert_eq!(settings.extra_folders, [r"D:\Projects", r"E:\Music"]);
+    }
+
+    #[test]
+    fn clipboard_limits_follow_the_settings() {
+        let settings = Settings {
+            clipboard_max_items: 100,
+            clipboard_max_days: 7,
+            ..Settings::default()
+        };
+        assert_eq!(
+            settings.clipboard_limits(),
+            Limits {
+                max_entries: 100,
+                max_age_secs: 7 * DAY
+            }
+        );
+        assert_eq!(Settings::default().clipboard_limits(), Limits::default());
     }
 }

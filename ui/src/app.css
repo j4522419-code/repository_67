@@ -17,8 +17,10 @@
   --on-accent: #ffffff;
 }
 
+/* Dark colors: when Windows is dark (unless Grandium is set to light), or
+   when Grandium is set to dark. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --surface: rgba(32, 32, 32, 0.78);
     --text: #ffffff;
     --text-secondary: rgba(255, 255, 255, 0.72);
@@ -33,6 +35,27 @@
     --accent-fill: rgba(76, 194, 255, 0.16);
     --on-accent: #000000;
   }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface: rgba(32, 32, 32, 0.78);
+  --text: #ffffff;
+  --text-secondary: rgba(255, 255, 255, 0.72);
+  --text-tertiary: rgba(255, 255, 255, 0.5);
+  --divider: rgba(255, 255, 255, 0.08);
+  --subtle-fill: rgba(255, 255, 255, 0.06);
+  --subtle-fill-strong: rgba(255, 255, 255, 0.12);
+  --selected-fill: rgba(255, 255, 255, 0.09);
+  --warning-bg: rgba(252, 225, 0, 0.16);
+  --error-bg: rgba(255, 153, 164, 0.16);
+  --accent: #4cc2ff;
+  --accent-fill: rgba(76, 194, 255, 0.16);
+  --on-accent: #000000;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
 }
 
 html,

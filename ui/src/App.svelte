@@ -11,6 +11,7 @@
   import ResultIcon from "./lib/ResultIcon.svelte";
   import Setup from "./lib/Setup.svelte";
   import SnippetEditor from "./lib/SnippetEditor.svelte";
+  import { applyTheme } from "./lib/theme";
 
   let query = $state("");
   let results = $state<SearchResult[]>([]);
@@ -176,6 +177,7 @@
   function refreshStatus() {
     return backend.status().then((s) => {
       status = s;
+      applyTheme(s.theme);
       if (s.setupNeeded) showSetup = true;
     });
   }
@@ -224,7 +226,11 @@
 
 <main class="launcher" bind:this={root}>
   {#if showSetup}
-    <Setup firstRun={status?.setupNeeded ?? false} onDone={finishSetup} />
+    <Setup
+      firstRun={status?.setupNeeded ?? false}
+      takenHotkey={status?.hotkeyError ? status.hotkey : null}
+      onDone={finishSetup}
+    />
   {:else if editing}
     <SnippetEditor {editing} onDone={finishEditing} />
   {:else}
@@ -248,9 +254,9 @@
 
   {#if status?.hotkeyError}
     <div class="notice warning" role="alert">
-      <strong>Alt+Space is taken by another app</strong>
-      (PowerToys Run or Command Palette, for example).
-      Open Grandium from its tray icon instead.
+      <strong>{status.hotkey} is taken by another app</strong>
+      (PowerToys Run or Command Palette, for example). Pick another one in the tray icon →
+      Settings, or open Grandium from its tray icon.
     </div>
   {/if}
 

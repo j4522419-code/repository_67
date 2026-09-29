@@ -15,7 +15,7 @@ pub struct SettingsStore {
 impl SettingsStore {
     pub fn load(file: Option<PathBuf>) -> Self {
         Self {
-            settings: Mutex::new(files::load_json(file.as_deref())),
+            settings: Mutex::new(files::load_json::<Settings>(file.as_deref()).cleaned()),
             file,
         }
     }

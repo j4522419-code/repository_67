@@ -3,8 +3,8 @@
 use windows::core::{HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Foundation::ERROR_SUCCESS;
 use windows::Win32::System::Registry::{
-    RegCloseKey, RegDeleteKeyValueW, RegEnumKeyExW, RegGetValueW, RegOpenKeyExW, HKEY, KEY_READ,
-    RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
+    RegCloseKey, RegDeleteKeyValueW, RegEnumKeyExW, RegGetValueW, RegOpenKeyExW, RegSetKeyValueW,
+    HKEY, KEY_READ, REG_SZ, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
 };
 
 pub use windows::Win32::System::Registry::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
@@ -66,6 +66,26 @@ pub fn read_dword(root: HKEY, key: &str, value: &str) -> Option<u32> {
         )
     };
     (found == ERROR_SUCCESS).then_some(data)
+}
+
+/// Writes a text value, creating the key if needed.
+pub fn write_string(root: HKEY, key: &str, value: &str, data: &str) -> Result<(), String> {
+    let bytes: Vec<u16> = data.encode_utf16().chain([0]).collect();
+    let result = unsafe {
+        RegSetKeyValueW(
+            root,
+            &HSTRING::from(key),
+            &HSTRING::from(value),
+            REG_SZ.0,
+            Some(bytes.as_ptr().cast()),
+            (bytes.len() * 2) as u32,
+        )
+    };
+    if result == ERROR_SUCCESS {
+        Ok(())
+    } else {
+        Err(windows::core::Error::from(result.to_hresult()).message())
+    }
 }
 
 /// Deletes a value; nothing happens if it isn't there.

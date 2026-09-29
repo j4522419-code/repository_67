@@ -3,15 +3,17 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { previewSearch, previewSnippetDraft } from "./preview";
+import type { Theme } from "./theme";
 
 export interface AppStatus {
   version: string;
-  /** The key that opens Grandium: "Alt+Space". */
+  /** The key combination that opens Grandium, like "Alt+Space". */
   hotkey: string;
-  /** Set when another app has Alt+Space. */
+  /** Set when another app has that combination. */
   hotkeyError: string | null;
-  /** The first-run setup hasn't been completed yet. */
+  /** Show the setup screen: on first run, or after installing. */
   setupNeeded: boolean;
+  theme: Theme;
 }
 
 export interface Choice {
@@ -23,11 +25,24 @@ export interface SetupChoices {
   /** An installed browser's ID, or null for Windows' default browser. */
   browser: string | null;
   searchEngine: string;
+  hotkey: string;
+  theme: Theme;
+  startWithWindows: boolean;
+  clipboardMaxItems: number;
+  clipboardMaxDays: number;
+  /** Searched besides Desktop, Documents and Downloads. */
+  extraFolders: string[];
 }
 
 export interface SetupOptions {
   browsers: Choice[];
   searchEngines: Choice[];
+  hotkeys: string[];
+  themes: Choice[];
+  clipboardItems: number[];
+  clipboardDays: number[];
+  /** The folders file search always looks in, by name. */
+  userFolders: string[];
   current: SetupChoices;
 }
 
@@ -88,6 +103,7 @@ export interface SearchResult {
 
 const inTauri = "__TAURI_INTERNALS__" in window;
 let previewSetupDone = false;
+let previewTheme: Theme = "system";
 
 function previewStatus(): AppStatus {
   const params = new URLSearchParams(location.search);
@@ -96,6 +112,7 @@ function previewStatus(): AppStatus {
     hotkey: "Alt+Space",
     hotkeyError: params.has("hotkeyError") ? "HotKey already registered" : null,
     setupNeeded: params.has("setup") && !previewSetupDone,
+    theme: previewTheme,
   };
 }
 
@@ -146,14 +163,39 @@ export const backend = {
             { id: "brave", name: "Brave Search" },
             { id: "ecosia", name: "Ecosia" },
           ],
-          current: { browser: null, searchEngine: "g" },
+          hotkeys: ["Alt+Space", "Ctrl+Space", "Ctrl+Alt+Space", "Alt+Shift+Space", "Ctrl+Shift+Space"],
+          themes: [
+            { id: "system", name: "Like Windows" },
+            { id: "light", name: "Light" },
+            { id: "dark", name: "Dark" },
+          ],
+          clipboardItems: [100, 500, 1000, 2000],
+          clipboardDays: [1, 7, 30, 90, 365],
+          userFolders: ["Desktop", "Documents", "Downloads"],
+          current: {
+            browser: null,
+            searchEngine: "g",
+            hotkey: "Alt+Space",
+            theme: previewTheme,
+            startWithWindows: true,
+            clipboardMaxItems: 500,
+            clipboardMaxDays: 30,
+            extraFolders: new URLSearchParams(location.search).has("folders") ? ["D:\\Projects", "E:\\Music"] : [],
+          },
         });
   },
 
+  /** Rejects with a message if a setting couldn't be put into effect. */
   saveSetup(choices: SetupChoices): Promise<void> {
     if (inTauri) return invoke("save_setup", { choices });
     previewSetupDone = true;
+    previewTheme = choices.theme;
     return Promise.resolve();
+  },
+
+  /** Asks for a folder to add to file search; null if none was picked. */
+  pickFolder(): Promise<string | null> {
+    return inTauri ? invoke<string | null>("pick_folder") : Promise.resolve("C:\\Users\\you\\Pictures");
   },
 
   /** What the snippet editor starts with for a result (see `editSnippet` actions). */
@@ -172,7 +214,10 @@ export const backend = {
 
   /** Called when the tray's "Settings…" asks for the setup screen. */
   onShowSetup(callback: () => void): Promise<UnlistenFn> {
-    return inTauri ? listen("show-setup", callback) : Promise.resolve(() => {});
+    if (inTauri) return listen("show-setup", callback);
+    // Previews open settings with ?settings.
+    if (new URLSearchParams(location.search).has("settings")) queueMicrotask(callback);
+    return Promise.resolve(() => {});
   },
 
   /** Called every time the launcher window is shown. */

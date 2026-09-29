@@ -1,7 +1,6 @@
 //! The tray icon: opening Grandium without the keyboard, settings, pausing
 //! clipboard history, and quitting.
 
-use grandium_core::DEFAULT_HOTKEY;
 use tauri::menu::{CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager};
@@ -74,10 +73,18 @@ pub fn sync_clipboard_paused(app: &AppHandle, paused: bool) {
     }
 }
 
+/// Shows the current hotkey in the tray icon's tooltip.
+pub fn refresh_tooltip(app: &AppHandle) {
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let _ = tray.set_tooltip(Some(tooltip(app)));
+    }
+}
+
 fn tooltip(app: &AppHandle) -> String {
-    if launcher::status(app).hotkey_error.is_some() {
+    let status = launcher::status(app);
+    if status.hotkey_error.is_some() {
         "Grandium (click to open)".to_string()
     } else {
-        format!("Grandium ({DEFAULT_HOTKEY})")
+        format!("Grandium ({})", status.hotkey)
     }
 }

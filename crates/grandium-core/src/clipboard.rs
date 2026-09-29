@@ -3,11 +3,29 @@
 use serde::{Deserialize, Serialize};
 
 /// The most unpinned entries kept.
+/// Kept by default; see [`Limits`].
 pub const MAX_ENTRIES: usize = 500;
 /// The most unpinned pictures kept, since they take far more space.
 pub const MAX_IMAGES: usize = 50;
 /// Unpinned entries are forgotten after this long.
 pub const MAX_AGE_SECS: u64 = 30 * DAY;
+
+/// How much history is kept: at most `max_entries` unpinned entries,
+/// none older than `max_age_secs`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Limits {
+    pub max_entries: usize,
+    pub max_age_secs: u64,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            max_entries: MAX_ENTRIES,
+            max_age_secs: MAX_AGE_SECS,
+        }
+    }
+}
 /// Longer texts aren't kept: they're rarely worth finding again.
 pub const MAX_TEXT_CHARS: usize = 100_000;
 
@@ -88,7 +106,7 @@ impl History {
     /// history moves it to the top instead of adding it twice. Blank and
     /// huge texts are skipped. Returns the entries dropped to stay within
     /// the limits, so their pictures can be deleted.
-    pub fn add(&mut self, content: Content, now: u64) -> Vec<Entry> {
+    pub fn add(&mut self, content: Content, now: u64, limits: Limits) -> Vec<Entry> {
         if let Content::Text { text } = &content {
             if text.trim().is_empty() || text.chars().count() > MAX_TEXT_CHARS {
                 return Vec::new();
@@ -111,11 +129,11 @@ impl History {
             }
         };
         self.entries.insert(0, entry);
-        self.prune(now)
+        self.prune(now, limits)
     }
 
     /// Drops unpinned entries that are too old, or beyond the count limits.
-    pub fn prune(&mut self, now: u64) -> Vec<Entry> {
+    pub fn prune(&mut self, now: u64, limits: Limits) -> Vec<Entry> {
         let (mut kept, mut images) = (0, 0);
         let (keep, dropped): (Vec<Entry>, Vec<Entry>) = std::mem::take(&mut self.entries)
             .into_iter()
@@ -124,8 +142,8 @@ impl History {
                     return true;
                 }
                 let is_image = matches!(entry.content, Content::Image { .. });
-                let fits = now.saturating_sub(entry.copied_at) <= MAX_AGE_SECS
-                    && kept < MAX_ENTRIES
+                let fits = now.saturating_sub(entry.copied_at) <= limits.max_age_secs
+                    && kept < limits.max_entries
                     && (!is_image || images < MAX_IMAGES);
                 if fits {
                     kept += 1;
@@ -195,6 +213,10 @@ pub fn ago(then: u64, now: u64) -> String {
 mod tests {
     use super::*;
 
+    fn add(history: &mut History, content: Content, now: u64) -> Vec<Entry> {
+        history.add(content, now, Limits::default())
+    }
+
     const NOW: u64 = 1_790_000_000;
 
     fn text(t: &str) -> Content {
@@ -220,18 +242,18 @@ mod tests {
     #[test]
     fn newest_first() {
         let mut history = History::default();
-        history.add(text("one"), NOW);
-        history.add(text("two"), NOW + 1);
+        add(&mut history, text("one"), NOW);
+        add(&mut history, text("two"), NOW + 1);
         assert_eq!(texts(&history), ["two", "one"]);
     }
 
     #[test]
     fn copying_again_moves_to_the_top() {
         let mut history = History::default();
-        history.add(text("one"), NOW);
-        history.add(text("two"), NOW + 1);
+        add(&mut history, text("one"), NOW);
+        add(&mut history, text("two"), NOW + 1);
         let id = history.entries()[1].id;
-        history.add(text("one"), NOW + 2);
+        add(&mut history, text("one"), NOW + 2);
         assert_eq!(texts(&history), ["one", "two"]);
         assert_eq!(history.entries()[0].id, id);
         assert_eq!(history.entries()[0].copied_at, NOW + 2);
@@ -240,16 +262,16 @@ mod tests {
     #[test]
     fn same_picture_is_kept_once() {
         let mut history = History::default();
-        history.add(image("abc"), NOW);
-        history.add(image("abc"), NOW + 1);
+        add(&mut history, image("abc"), NOW);
+        add(&mut history, image("abc"), NOW + 1);
         assert_eq!(history.entries().len(), 1);
     }
 
     #[test]
     fn skips_blank_and_huge_texts() {
         let mut history = History::default();
-        history.add(text("  \n\t "), NOW);
-        history.add(text(&"x".repeat(MAX_TEXT_CHARS + 1)), NOW);
+        add(&mut history, text("  \n\t "), NOW);
+        add(&mut history, text(&"x".repeat(MAX_TEXT_CHARS + 1)), NOW);
         assert!(history.entries().is_empty());
     }
 
@@ -257,7 +279,7 @@ mod tests {
     fn keeps_at_most_max_entries_dropping_the_oldest() {
         let mut history = History::default();
         for i in 0..MAX_ENTRIES + 3 {
-            history.add(text(&i.to_string()), NOW + i as u64);
+            add(&mut history, text(&i.to_string()), NOW + i as u64);
         }
         assert_eq!(history.entries().len(), MAX_ENTRIES);
         assert_eq!(history.entries().last().unwrap().content.summary(), "3");
@@ -268,9 +290,9 @@ mod tests {
         let mut history = History::default();
         let mut dropped = Vec::new();
         for i in 0..MAX_IMAGES + 2 {
-            dropped.extend(history.add(image(&i.to_string()), NOW + i as u64));
+            dropped.extend(add(&mut history, image(&i.to_string()), NOW + i as u64));
         }
-        history.add(text("still here"), NOW + 100);
+        add(&mut history, text("still here"), NOW + 100);
         assert_eq!(history.entries().len(), MAX_IMAGES + 1);
         assert_eq!(dropped.len(), 2);
     }
@@ -278,11 +300,11 @@ mod tests {
     #[test]
     fn forgets_old_entries_but_not_pinned_ones() {
         let mut history = History::default();
-        history.add(text("old"), NOW);
-        history.add(text("old but pinned"), NOW);
+        add(&mut history, text("old"), NOW);
+        add(&mut history, text("old but pinned"), NOW);
         let pinned = history.entries()[0].id;
         history.set_pinned(pinned, true);
-        let dropped = history.add(text("new"), NOW + MAX_AGE_SECS + 1);
+        let dropped = add(&mut history, text("new"), NOW + MAX_AGE_SECS + 1);
         assert_eq!(texts(&history), ["new", "old but pinned"]);
         assert_eq!(dropped.len(), 1);
     }
@@ -290,8 +312,8 @@ mod tests {
     #[test]
     fn clear_keeps_pinned_entries() {
         let mut history = History::default();
-        history.add(text("a"), NOW);
-        history.add(text("b"), NOW);
+        add(&mut history, text("a"), NOW);
+        add(&mut history, text("b"), NOW);
         let b = history.entries()[0].id;
         history.set_pinned(b, true);
         assert_eq!(history.clear().len(), 1);
@@ -301,9 +323,9 @@ mod tests {
     #[test]
     fn listing_puts_pinned_first() {
         let mut history = History::default();
-        history.add(text("a"), NOW);
-        history.add(text("b"), NOW + 1);
-        history.add(text("c"), NOW + 2);
+        add(&mut history, text("a"), NOW);
+        add(&mut history, text("b"), NOW + 1);
+        add(&mut history, text("c"), NOW + 2);
         let a = history.entries()[2].id;
         history.set_pinned(a, true);
         let order: Vec<String> = history
@@ -317,7 +339,7 @@ mod tests {
     #[test]
     fn remove_and_get() {
         let mut history = History::default();
-        history.add(text("a"), NOW);
+        add(&mut history, text("a"), NOW);
         let id = history.entries()[0].id;
         assert!(history.get(id).is_some());
         assert!(history.remove(id).is_some());
@@ -345,9 +367,25 @@ mod tests {
     #[test]
     fn round_trips_through_json() {
         let mut history = History::default();
-        history.add(text("a"), NOW);
-        history.add(image("h"), NOW);
+        add(&mut history, text("a"), NOW);
+        add(&mut history, image("h"), NOW);
         let json = serde_json::to_string(&history).unwrap();
         assert_eq!(serde_json::from_str::<History>(&json).unwrap(), history);
+    }
+
+    #[test]
+    fn keeps_to_chosen_limits() {
+        let limits = Limits {
+            max_entries: 2,
+            max_age_secs: 60,
+        };
+        let mut history = History::default();
+        for i in 0..3 {
+            history.add(text(&i.to_string()), NOW + i, limits);
+        }
+        assert_eq!(history.entries().len(), 2);
+        let dropped = history.prune(NOW + 62, limits);
+        assert_eq!(dropped.len(), 1, "the older one is past a minute");
+        assert_eq!(history.entries().len(), 1);
     }
 }

@@ -3,8 +3,10 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use grandium_core::layout::{launcher_origin, Rect};
-use grandium_core::DEFAULT_HOTKEY;
+use grandium_core::settings::Theme;
 use serde::Serialize;
 use tauri::{
     AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, WebviewWindow, Window, WindowEvent,
@@ -26,52 +28,82 @@ const BLUR_GRACE: Duration = Duration::from_millis(250);
 
 #[derive(Default)]
 pub struct LauncherState {
-    /// Why Alt+Space couldn't be claimed, if it couldn't.
+    /// The key combination registered to open Grandium.
+    hotkey: Mutex<String>,
+    /// Why it couldn't be claimed, if it couldn't.
     hotkey_error: Mutex<Option<String>>,
     shown_at: Mutex<Option<Instant>>,
     /// The window that was in front before the launcher opened, where
     /// pasting goes.
     previous_window: Mutex<isize>,
+    /// A dialog of ours is open, so losing focus to it mustn't hide the
+    /// launcher.
+    dialog_open: AtomicBool,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppStatus {
     version: String,
-    /// The key that opens Grandium.
-    hotkey: &'static str,
-    /// Set when another app has Alt+Space.
+    /// The key combination that opens Grandium, like "Alt+Space".
+    pub hotkey: String,
+    /// Set when another app has that combination.
     pub hotkey_error: Option<String>,
-    /// The first-run setup hasn't been completed yet.
-    setup_needed: bool,
+    /// The setup screen should come up: on first run, or after installing.
+    pub setup_needed: bool,
+    theme: Theme,
 }
 
-/// Claims Alt+Space. A problem (usually another app owning it) is kept for
-/// the UI and tray.
-pub fn register_hotkey(app: &AppHandle) {
-    let shortcut: Shortcut = DEFAULT_HOTKEY.parse().expect("the default hotkey is valid");
+/// Makes `hotkey` open Grandium, letting go of the one used before. A
+/// problem (usually another app owning it) is kept for the UI and tray.
+pub fn register_hotkey(app: &AppHandle, hotkey: &str) {
+    let state = app.state::<LauncherState>();
     let shortcuts = app.global_shortcut();
-    let error = if shortcuts.is_registered(shortcut) {
-        None
-    } else {
-        shortcuts.register(shortcut).err().map(|e| e.to_string())
+    let mut current = state.hotkey.lock().unwrap();
+    if let (true, Ok(old)) = (*current != hotkey, current.parse::<Shortcut>()) {
+        let _ = shortcuts.unregister(old);
+    }
+    let error = match hotkey.parse::<Shortcut>() {
+        Err(e) => Some(e.to_string()),
+        Ok(shortcut) if shortcuts.is_registered(shortcut) => None,
+        Ok(shortcut) => shortcuts.register(shortcut).err().map(|e| e.to_string()),
     };
-    *app.state::<LauncherState>().hotkey_error.lock().unwrap() = error;
+    *current = hotkey.to_string();
+    *state.hotkey_error.lock().unwrap() = error;
 }
 
 pub fn status(app: &AppHandle) -> AppStatus {
+    let state = app.state::<LauncherState>();
+    let settings = app.state::<SettingsStore>().get();
+    let hotkey = state.hotkey.lock().unwrap().clone();
+    let hotkey_error = state.hotkey_error.lock().unwrap().clone();
     AppStatus {
         version: app.package_info().version.to_string(),
-        hotkey: DEFAULT_HOTKEY,
-        hotkey_error: app
-            .state::<LauncherState>()
-            .hotkey_error
-            .lock()
-            .unwrap()
-            .clone(),
-        setup_needed: !app.state::<SettingsStore>().get().setup_done
-            || platform::installer::setup_requested(),
+        hotkey,
+        hotkey_error,
+        setup_needed: !settings.setup_done || platform::installer::setup_requested(),
+        theme: settings.theme,
     }
+}
+
+/// Light or dark for the window itself (its blurred background), to match
+/// the UI's colors.
+pub fn apply_theme(app: &AppHandle, theme: Theme) {
+    if let Some(window) = app.get_webview_window(LABEL) {
+        let _ = window.set_theme(match theme {
+            Theme::System => None,
+            Theme::Light => Some(tauri::Theme::Light),
+            Theme::Dark => Some(tauri::Theme::Dark),
+        });
+    }
+}
+
+/// While a dialog of ours is open, clicking into it doesn't hide the
+/// launcher.
+pub fn set_dialog_open(app: &AppHandle, open: bool) {
+    app.state::<LauncherState>()
+        .dialog_open
+        .store(open, Ordering::SeqCst);
 }
 
 pub fn on_hotkey(app: &AppHandle, _shortcut: &Shortcut, event: ShortcutEvent) {
@@ -174,7 +206,7 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
                 .lock()
                 .unwrap()
                 .is_some_and(|at| at.elapsed() < BLUR_GRACE);
-            if !just_shown {
+            if !just_shown && !state.dialog_open.load(Ordering::SeqCst) {
                 let _ = window.hide();
             }
         }
@@ -202,4 +234,17 @@ pub fn set_launcher_height(window: WebviewWindow, height: f64) -> Result<(), Str
     window
         .set_size(LogicalSize::new(WIDTH, height.clamp(1.0, MAX_HEIGHT)))
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use grandium_core::settings::HOTKEYS;
+
+    #[test]
+    fn every_offered_hotkey_works() {
+        for hotkey in HOTKEYS {
+            assert!(hotkey.parse::<Shortcut>().is_ok(), "{hotkey}");
+        }
+    }
 }

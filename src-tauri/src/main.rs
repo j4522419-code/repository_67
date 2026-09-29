@@ -51,6 +51,7 @@ fn main() {
             search::run_action,
             setup::setup_options,
             setup::save_setup,
+            setup::pick_folder,
             snippets::snippet_draft,
             snippets::save_snippet,
         ])
@@ -60,18 +61,28 @@ fn main() {
             let data = files::data_dir(handle);
             let file = |name: &str| data.as_ref().map(|dir| dir.join(name));
             app.manage(settings::SettingsStore::load(file("settings.json")));
+            let settings = app.state::<settings::SettingsStore>().get();
             app.manage(search::SearchState::load(file("usage.json")));
-            app.manage(clipboard::ClipboardStore::load(file("clipboard")));
+            app.manage(clipboard::ClipboardStore::load(
+                file("clipboard"),
+                settings.clipboard_limits(),
+            ));
             app.manage(snippets::SnippetStore::load(file("snippets.json")));
             app.manage(notes::NoteStore::new(notes::notes_dir(handle)));
             app.manage(launcher::LauncherState::default());
 
-            launcher::register_hotkey(handle);
+            // Problems here (another app owning the hotkey, say) show up in
+            // the launcher; Grandium still starts.
+            let _ = setup::apply(handle, None, &settings);
             tray::create(handle)?;
             clipboard::start_recording(handle);
-            file_search::start(handle);
-            // Show the launcher once at startup so it's clear Grandium is running.
-            launcher::show(handle);
+            file_search::start(handle, &settings.extra_folders);
+            // Show the launcher once at startup so it's clear Grandium is
+            // running, unless Windows started it at sign-in.
+            let at_sign_in = std::env::args().any(|arg| arg == platform::startup::BACKGROUND_ARG);
+            if !at_sign_in || launcher::status(handle).setup_needed {
+                launcher::show(handle);
+            }
             Ok(())
         })
         .run(tauri::generate_context!())

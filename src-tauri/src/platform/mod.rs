@@ -2,6 +2,7 @@
 
 mod browsers;
 pub mod clipboard;
+pub mod dialog;
 pub mod installer;
 pub mod locale;
 mod power;
@@ -9,6 +10,7 @@ mod programs;
 pub mod protect;
 mod registry;
 mod shell;
+pub mod startup;
 pub mod watch;
 
 use windows::Win32::System::Com::{
