@@ -6,7 +6,7 @@ the web, run system commands, get back anything you copied, paste saved snippets
 and jot down quick notes. It runs in the tray, starts with Windows and keeps all
 data on your PC.
 
-*Status: M0–M3 built (launcher, app search, calculator/web/system commands, clipboard history), plus slash commands, Run-box commands, and uninstalling apps. Waiting for testing on Windows. Last updated 2026-09-29.*
+*Status: M0–M4 built (launcher, app search, calculator/web/system commands, clipboard history, file search), plus slash commands, Run-box commands, and uninstalling apps. Waiting for testing on Windows. Last updated 2026-09-29.*
 
 ---
 
@@ -77,7 +77,7 @@ Type `/` to see them all; Tab or Enter picks one.
 | `/run` | Runs anything, like Win+R. Paths, `%temp%`-style variables, `shell:` links and program names like `regedit` also work without it. |
 | `/system` `/sys` | System commands |
 | `/clip` | Clipboard history (M3) |
-| `/files` | Files only (M4) |
+| `/files` `/f` | Files and folders only. On its own, it lists your most recently changed files. |
 | `/snip`, `/note` | Snippets and notes (M5). `/note buy milk` + Enter saves a note |
 
 ---
@@ -116,9 +116,23 @@ Type `/` to see them all; Tab or Enter picks one.
   - Default limits are 500 items or 30 days, whichever comes first. Both can be changed.
 
 ### File search
-- Indexes file and folder names in Desktop, Documents and Downloads, plus any folders you add.
-- Watches those folders, so the index stays current.
-- Actions: open, open containing folder, copy path.
+- Indexes the names of files and folders in Desktop, Documents and Downloads,
+  wherever Windows keeps them (OneDrive included). Adding more folders comes
+  with settings (M6).
+- Skips what Explorer hides and what nobody searches for: hidden and system
+  files, `.git` and other dot-folders, `node_modules`, Office lock files
+  (`~$…`) and unfinished downloads.
+- Watches those folders (ReadDirectoryChangesW), so new, renamed and deleted
+  files show up within a couple of seconds.
+- Every word typed must appear in the name: `tax 2025` finds
+  *2025 tax return.pdf*. Recently changed files, and files you open often,
+  rank higher.
+- Up to 3 files show up among everything else once you type 2 letters; `/files`
+  shows up to 50.
+- Actions: **Open** (Enter), **Open file location** (Ctrl+Enter), **Copy path**
+  (Ctrl+Shift+C).
+- Icons are Explorer's, shared per file type; thumbnails are never read, so
+  OneDrive files that live only online aren't downloaded.
 
 ### Snippets
 - Saved text that can be pasted from the search bar, e.g. `;addr` → your address.
@@ -203,7 +217,7 @@ grandium/
 | Win32 APIs (clipboard listener, icons, SendInput, shell) | `windows` crate |
 | Fuzzy matching | `nucleo-matcher` |
 | Database | `rusqlite` (bundled SQLite) |
-| Folder walking and watching | `jwalk` / `notify` |
+| Folder walking and watching | Rust's standard library + `ReadDirectoryChangesW` |
 | Blur effect | Tauri window effects (Mica/Acrylic) |
 
 ### Performance targets

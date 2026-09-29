@@ -1,12 +1,14 @@
 //! What the search box calls: finding results for what was typed, and
 //! running the action picked for a result.
 
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use grandium_core::apps::{can_run_as_admin, has_file_location};
 use grandium_core::clipboard::{self as history, Content, Entry};
+use grandium_core::file_index::{self, FileIndex, Meta};
 use grandium_core::query::{self, Query, SlashCommand};
 use grandium_core::rank::Ranker;
 use grandium_core::system::{self, Command};
@@ -17,13 +19,19 @@ use tauri::{AppHandle, Manager, State, WebviewWindow};
 
 use crate::apps::{App, AppIndex, Uninstall};
 use crate::clipboard::{self, ClipboardStore};
+use crate::file_search::FileSearch;
 use crate::platform::{self, Com, Launch};
 use crate::settings::SettingsStore;
 use crate::{files, icons, launcher, tray};
 
 const MAX_RESULTS: usize = 8;
-/// Clipboard history scrolls, so it can show more.
+/// Clipboard history and `/files` scroll, so they can show more.
 const MAX_CLIPBOARD_RESULTS: usize = 50;
+const MAX_FILE_RESULTS: usize = 50;
+/// How many files can show up among everything else.
+const FILES_AMONG_EVERYTHING: usize = 3;
+/// Files rank a little below apps and commands that match as well.
+const FILE_WEIGHT: f64 = 0.7;
 
 pub struct SearchState {
     ranker: Mutex<Ranker>,
@@ -402,6 +410,74 @@ fn clipboard_controls(paused: bool) -> Vec<SearchResult> {
     vec![pause, clear]
 }
 
+fn file_key(path: &Path) -> String {
+    format!("file:{}", path.display())
+}
+
+fn file_result(
+    index: &FileIndex,
+    path: &Path,
+    meta: &Meta,
+    highlights: Vec<[u32; 2]>,
+) -> SearchResult {
+    let kind = if meta.is_dir { "folder" } else { "file" };
+    SearchResult {
+        id: file_key(path),
+        title: file_index::display_name(path).to_string(),
+        subtitle: Some(index.location(path)),
+        kind: if meta.is_dir { "Folder" } else { "File" },
+        icon: Some(IconRef {
+            scheme: icons::SCHEME,
+            key: format!("{kind}:{}", path.display()),
+        }),
+        glyph: Some(kind),
+        highlights,
+        actions: vec![
+            action("open", "Open", "Enter"),
+            action("openLocation", "Open file location", "Ctrl+Enter"),
+            action("copyPath", "Copy path", "Ctrl+Shift+C"),
+        ],
+        ..Default::default()
+    }
+}
+
+/// Files and folders whose name has every word of `text` in it, best
+/// first, with how well each matched.
+fn file_matches(
+    index: &FileIndex,
+    ranker: &mut Ranker,
+    text: &str,
+    limit: usize,
+    boost: impl Fn(&str) -> f64,
+) -> Vec<(f64, SearchResult)> {
+    let now = unix_now();
+    let items: Vec<(&Path, &Meta, &str)> = index
+        .iter()
+        .map(|(path, meta)| (path, meta, file_index::display_name(path)))
+        .collect();
+    // Files changed lately are more likely to be the ones wanted.
+    let fresh = |modified: u64| 0.5 / (1.0 + now.saturating_sub(modified) as f64 / 604_800.0);
+    ranker
+        .rank_words(
+            text,
+            &items,
+            |item| item.2,
+            |item| boost(&file_key(item.0)) + fresh(item.1.modified),
+            limit,
+        )
+        .into_iter()
+        .map(|r| {
+            let (path, meta, _) = items[r.index];
+            (r.score, file_result(index, path, meta, r.highlights))
+        })
+        .collect()
+}
+
+fn is_shortcut(result: &SearchResult) -> bool {
+    let id = result.id.to_ascii_lowercase();
+    result.kind == "File" && (id.ends_with(".lnk") || id.ends_with(".url"))
+}
+
 #[tauri::command]
 pub fn search(
     query: String,
@@ -409,6 +485,7 @@ pub fn search(
     state: State<SearchState>,
     clipboard: State<ClipboardStore>,
     settings: State<SettingsStore>,
+    files: State<FileSearch>,
 ) -> Vec<SearchResult> {
     let usage = state.usage.lock().unwrap();
     let mut ranker = state.ranker.lock().unwrap();
@@ -446,6 +523,20 @@ pub fn search(
             }
             results
         }
+        Query::Files("") => {
+            let index = files.index();
+            index
+                .recent(MAX_FILE_RESULTS)
+                .into_iter()
+                .map(|(path, meta)| file_result(&index, path, meta, Vec::new()))
+                .collect()
+        }
+        Query::Files(text) => {
+            file_matches(&files.index(), &mut ranker, text, MAX_FILE_RESULTS, boost)
+                .into_iter()
+                .map(|(_, result)| result)
+                .collect()
+        }
         Query::Commands(prefix) => query::matching_commands(prefix)
             .into_iter()
             .map(slash_command_result)
@@ -472,6 +563,27 @@ pub fn search(
                 .map(|r| (r.score, app_result(&apps[r.index], r.highlights)))
                 .collect();
             ranked.extend(system_matches(&mut ranker, text));
+            if text.chars().count() >= 2 {
+                // Desktop shortcuts to apps are already there as the apps.
+                let apps: HashSet<String> =
+                    ranked.iter().map(|(_, r)| r.title.to_lowercase()).collect();
+                let found = file_matches(
+                    &files.index(),
+                    &mut ranker,
+                    text,
+                    FILES_AMONG_EVERYTHING + 2,
+                    boost,
+                );
+                ranked.extend(
+                    found
+                        .into_iter()
+                        .filter(|(_, r)| {
+                            !(is_shortcut(r) && apps.contains(&r.title.to_lowercase()))
+                        })
+                        .take(FILES_AMONG_EVERYTHING)
+                        .map(|(score, r)| (score * FILE_WEIGHT, r)),
+                );
+            }
             // A couple of clipboard matches, ranked below similar matches
             // of other kinds.
             if text.chars().count() >= 3 {
@@ -510,6 +622,7 @@ pub async fn run_action(
             return Ok(Outcome::Refresh);
         }
         "app" => run_app_action(&app, &id, &action).await?,
+        "file" => run_file_action(&app, &window, &id, details, &action).await?,
         "sys" => run_system_command(&app, details).await?,
         "calc" => {
             let owner = window.hwnd().map_err(|e| e.to_string())?;
@@ -590,6 +703,34 @@ fn run_clipboard_command(app: &AppHandle, command: &str) {
         }
         "clear" => app.state::<ClipboardStore>().clear(),
         _ => {}
+    }
+}
+
+async fn run_file_action(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    id: &str,
+    path: &str,
+    action: &str,
+) -> Result<(), String> {
+    if action == "copyPath" {
+        let owner = window.hwnd().map_err(|e| e.to_string())?;
+        return platform::copy_text(owner, path);
+    }
+    if !Path::new(path).exists() {
+        return Err(format!(
+            "“{}” isn't there anymore. It may have been moved or deleted.",
+            file_index::display_name(Path::new(path))
+        ));
+    }
+    let target = path.to_string();
+    match action {
+        "openLocation" => in_background(move || platform::show_in_explorer(&target)).await,
+        _ => {
+            in_background(move || platform::open_path(&target)).await?;
+            app.state::<SearchState>().record_use(id);
+            Ok(())
+        }
     }
 }
 

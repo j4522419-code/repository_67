@@ -1,10 +1,13 @@
-//! Serves app icons to the UI from a custom `icon` URL scheme. The UI asks
-//! for `convertFileSrc(appId, "icon")` and gets a PNG, read from Windows the
-//! first time and kept in memory after that.
+//! Serves icons to the UI from a custom `icon` URL scheme. The UI asks
+//! for `convertFileSrc(key, "icon")` and gets a PNG, read from Windows the
+//! first time and kept in memory after that. The key is an app's ID, or
+//! `file:<path>` or `folder:<path>`.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::mpsc::{self, Sender};
 
+use grandium_core::file_index;
 use percent_encoding::percent_decode_str;
 use tauri::http::{header, HeaderValue, Request, Response, StatusCode};
 use tauri::UriSchemeResponder;
@@ -28,10 +31,15 @@ impl IconServer {
             let _com = Com::init();
             // Failures are cached too, so a broken icon isn't retried on every keystroke.
             let mut cache: HashMap<String, Option<Vec<u8>>> = HashMap::new();
-            for (id, responder) in incoming {
-                let png = cache
-                    .entry(id)
-                    .or_insert_with_key(|id| platform::app_icon(id, SIZE).ok());
+            for (key, responder) in incoming {
+                let (shared, source) = source(&key);
+                let png = cache.entry(shared).or_insert_with(|| {
+                    match source {
+                        Source::App(id) => platform::app_icon(id, SIZE),
+                        Source::File(path) => platform::file_icon(path, SIZE),
+                    }
+                    .ok()
+                });
                 responder.respond(match png {
                     Some(png) => png_response(png.clone()),
                     None => not_found(),
@@ -45,6 +53,30 @@ impl IconServer {
         let path = request.uri().path().trim_start_matches('/');
         let id = percent_decode_str(path).decode_utf8_lossy().into_owned();
         let _ = self.requests.send((id, responder));
+    }
+}
+
+enum Source<'a> {
+    App(&'a str),
+    File(&'a str),
+}
+
+/// What `key` asks for, and the key its icon is kept under: files of the
+/// same type share one icon.
+fn source(key: &str) -> (String, Source<'_>) {
+    let file = |path, is_dir| {
+        let shared = file_index::icon_group(Path::new(path), is_dir);
+        (
+            shared.unwrap_or_else(|| key.to_string()),
+            Source::File(path),
+        )
+    };
+    if let Some(path) = key.strip_prefix("file:") {
+        file(path, false)
+    } else if let Some(path) = key.strip_prefix("folder:") {
+        file(path, true)
+    } else {
+        (key.to_string(), Source::App(key))
     }
 }
 

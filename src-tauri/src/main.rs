@@ -6,6 +6,7 @@ compile_error!("Grandium is a Windows app.");
 
 mod apps;
 mod clipboard;
+mod file_search;
 mod files;
 mod icons;
 mod launcher;
@@ -39,6 +40,7 @@ fn main() {
             clipboard::serve_picture(ctx.app_handle(), request, responder)
         })
         .manage(apps::AppIndex::default())
+        .manage(file_search::FileSearch::default())
         .invoke_handler(tauri::generate_handler![
             launcher::app_status,
             launcher::hide_launcher,
@@ -61,6 +63,7 @@ fn main() {
             launcher::register_hotkey(handle);
             tray::create(handle)?;
             clipboard::start_recording(handle);
+            file_search::start(handle);
             // Show the launcher once at startup so it's clear Grandium is running.
             launcher::show(handle);
             Ok(())

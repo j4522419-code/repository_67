@@ -4,6 +4,7 @@
 pub mod apps;
 pub mod calc;
 pub mod clipboard;
+pub mod file_index;
 pub mod icon;
 pub mod image;
 pub mod layout;

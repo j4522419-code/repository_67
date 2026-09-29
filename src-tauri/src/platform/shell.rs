@@ -6,7 +6,7 @@
 //! `shell:AppsFolder\<id>` starts either kind.
 
 use std::os::windows::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use grandium_core::run;
@@ -23,11 +23,11 @@ use windows::Win32::Storage::FileSystem::SearchPathW;
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::Environment::ExpandEnvironmentStringsW;
 use windows::Win32::UI::Shell::{
-    BHID_EnumItems, FOLDERID_AppsFolder, IEnumShellItems, IShellItem, IShellItem2,
-    IShellItemImageFactory, SHCreateItemFromParsingName, SHGetKnownFolderItem,
-    SHGetKnownFolderPath, ShellExecuteExW, ShellExecuteW, KF_FLAG_DEFAULT, SEE_MASK_FLAG_NO_UI,
-    SEE_MASK_INVOKEIDLIST, SEE_MASK_NOASYNC, SHELLEXECUTEINFOW, SIGDN_NORMALDISPLAY,
-    SIGDN_PARENTRELATIVEPARSING, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY,
+    BHID_EnumItems, FOLDERID_AppsFolder, FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Downloads,
+    IEnumShellItems, IShellItem, IShellItem2, IShellItemImageFactory, SHCreateItemFromParsingName,
+    SHGetKnownFolderItem, SHGetKnownFolderPath, ShellExecuteExW, ShellExecuteW, KF_FLAG_DEFAULT,
+    SEE_MASK_FLAG_NO_UI, SEE_MASK_INVOKEIDLIST, SEE_MASK_NOASYNC, SHELLEXECUTEINFOW,
+    SIGDN_NORMALDISPLAY, SIGDN_PARENTRELATIVEPARSING, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY,
 };
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
@@ -83,6 +83,22 @@ unsafe fn read_app(item: &IShellItem) -> Option<ShellApp> {
         .filter(|target| !target.is_empty())
         .or_else(|| path_from_id(&id));
     Some(ShellApp { id, name, target })
+}
+
+/// The folders file search looks in, where Windows keeps them for this
+/// user (possibly moved into OneDrive), by name.
+pub fn user_folders() -> Vec<(&'static str, PathBuf)> {
+    [
+        ("Desktop", FOLDERID_Desktop),
+        ("Documents", FOLDERID_Documents),
+        ("Downloads", FOLDERID_Downloads),
+    ]
+    .into_iter()
+    .filter_map(|(name, id)| {
+        let path = unsafe { take_string(SHGetKnownFolderPath(&id, KF_FLAG_DEFAULT, None).ok()?)? };
+        Some((name, PathBuf::from(path)))
+    })
+    .collect()
 }
 
 /// Program IDs are often paths, either plain or starting with a known
@@ -162,6 +178,20 @@ pub fn run_command(text: &str, how: Launch) -> Result<(), String> {
         run::split_command_line(&expanded)
     };
     start_program(&file, &args, how)
+}
+
+/// Opens a file or folder the way double-clicking it in Explorer would.
+/// For a file type nothing opens, Windows asks what to open it with.
+pub fn open_path(path: &str) -> Result<(), String> {
+    let file = HSTRING::from(path);
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_INVOKEIDLIST | SEE_MASK_NOASYNC,
+        lpFile: PCWSTR(file.as_ptr()),
+        nShow: SW_SHOWNORMAL.0,
+        ..Default::default()
+    };
+    execute(&mut info)
 }
 
 /// Starts a program (or opens a file, folder or link) with arguments.
@@ -262,9 +292,20 @@ pub fn open_url(url: &str) -> Result<(), String> {
 
 /// The app's icon as a PNG, `size` pixels square (or close to it).
 pub fn app_icon(id: &str, size: u32) -> Result<Vec<u8>, String> {
+    icon(&app_path(id), size)
+}
+
+/// A file's or folder's icon, as Explorer shows it; like [`app_icon`].
+/// Only the icon, never a thumbnail of what's inside, which could mean
+/// downloading a OneDrive file.
+pub fn file_icon(path: &str, size: u32) -> Result<Vec<u8>, String> {
+    icon(&HSTRING::from(path), size)
+}
+
+fn icon(parsing_name: &HSTRING, size: u32) -> Result<Vec<u8>, String> {
     unsafe {
         let factory: IShellItemImageFactory =
-            SHCreateItemFromParsingName(&app_path(id), None).map_err(message)?;
+            SHCreateItemFromParsingName(parsing_name, None).map_err(message)?;
         let size = SIZE {
             cx: size as i32,
             cy: size as i32,

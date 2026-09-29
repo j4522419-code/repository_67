@@ -54,6 +54,7 @@ const COMMANDS: [name: string, description: string, glyph: string][] = [
   ["google", "Search Google · also /g", "web"],
   ["youtube", "Search YouTube · also /yt", "web"],
   ["wiki", "Search Wikipedia · also /w, /wikipedia", "web"],
+  ["files", "Find files and folders · also /f, /file", "file"],
   ["calc", "Calculator · also /=", "calculator"],
   ["clip", "Clipboard history · also /clipboard, /c", "clipboard"],
   ["run", "Run a command or open a path, like Win+R", "run"],
@@ -78,6 +79,8 @@ export function previewSearch(query: string): SearchResult[] {
     );
   }
   if (q.startsWith("/clip")) return previewClipboard(q.slice(5).trim());
+  const files = /^\/(files?|f)(\s|$)/.exec(q);
+  if (files) return previewFiles(q.slice(files[0].length).trim(), 50);
   const results: SearchResult[] = [];
   if (q === "%temp%") {
     results.push(
@@ -134,6 +137,7 @@ export function previewSearch(query: string): SearchResult[] {
       actions: [action("run", name, "Enter", confirm)],
     }));
   }
+  if (q.length >= 2) results.push(...previewFiles(q, 3));
   results.push(result({
     id: `web:g:${query.trim()}`,
     title: `Search Google for “${query.trim()}”`,
@@ -144,6 +148,38 @@ export function previewSearch(query: string): SearchResult[] {
     actions: [action("open", "Search")],
   }));
   return results.slice(0, 8);
+}
+
+// Newest first, like `/files` on its own lists them.
+const FILES: [name: string, location: string, folder: boolean][] = [
+  ["Budget 2026.xlsx", "Documents", false],
+  ["Flight confirmation.pdf", "Downloads", false],
+  ["Taxes", "Documents", true],
+  ["2025 tax return.pdf", "Documents › Taxes", false],
+  ["Old budget notes.docx", "Documents › Archive › 2024", false],
+  ["setup-vscode-x64.exe", "Downloads", false],
+  ["Screenshot 2026-09-28 101512.png", "Desktop", false],
+];
+
+function previewFiles(q: string, limit: number): SearchResult[] {
+  const words = q.split(/\s+/).filter(Boolean);
+  return FILES.filter(([name]) => words.every((w) => name.toLowerCase().includes(w)))
+    .slice(0, limit)
+    .map(([name, location, folder]) =>
+      result({
+        id: `file:${name}`,
+        title: name,
+        subtitle: location,
+        kind: folder ? "Folder" : "File",
+        glyph: folder ? "folder" : "file",
+        highlights: words.length === 1 ? (matching(name, words[0]) ?? []) : [],
+        actions: [
+          action("open", "Open"),
+          action("openLocation", "Open file location", "Ctrl+Enter"),
+          action("copyPath", "Copy path", "Ctrl+Shift+C"),
+        ],
+      }),
+    );
 }
 
 const COPIES: [text: string, when: string, pinned: boolean][] = [

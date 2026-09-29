@@ -43,7 +43,8 @@ impl Default for Ranker {
 
 impl Ranker {
     /// Returns up to `limit` items whose title matches `query`, best first.
-    /// Each word of the query must match somewhere in the title.
+    /// Each word of the query must match somewhere in the title, fuzzily:
+    /// its letters in order, not necessarily together.
     /// `boost` gives an item's usage boost, see [`crate::usage::Usage::boost`].
     pub fn rank<T>(
         &mut self,
@@ -53,12 +54,32 @@ impl Ranker {
         boost: impl Fn(&T) -> f64,
         limit: usize,
     ) -> Vec<Ranked> {
-        let pattern = Pattern::new(
-            query,
-            CaseMatching::Ignore,
-            Normalization::Smart,
-            AtomKind::Fuzzy,
-        );
+        self.rank_by(AtomKind::Fuzzy, query, items, title, boost, limit)
+    }
+
+    /// Like [`Ranker::rank`], but each word must appear as it was typed.
+    /// For long lists like files, where fuzzy matching finds too much.
+    pub fn rank_words<T>(
+        &mut self,
+        query: &str,
+        items: &[T],
+        title: impl Fn(&T) -> &str,
+        boost: impl Fn(&T) -> f64,
+        limit: usize,
+    ) -> Vec<Ranked> {
+        self.rank_by(AtomKind::Substring, query, items, title, boost, limit)
+    }
+
+    fn rank_by<T>(
+        &mut self,
+        kind: AtomKind,
+        query: &str,
+        items: &[T],
+        title: impl Fn(&T) -> &str,
+        boost: impl Fn(&T) -> f64,
+        limit: usize,
+    ) -> Vec<Ranked> {
+        let pattern = Pattern::new(query, CaseMatching::Ignore, Normalization::Smart, kind);
         if pattern.atoms.is_empty() {
             return Vec::new();
         }
@@ -232,6 +253,25 @@ mod tests {
         let edge = ranked.iter().find(|r| r.index == 0).unwrap().score;
         let ms_edge = ranked.iter().find(|r| r.index == 1).unwrap().score;
         assert!(ms_edge <= edge * MAX_MULTIPLIER);
+    }
+
+    #[test]
+    fn word_matching_needs_each_word_together() {
+        let files = [
+            "Budget 2026.xlsx",
+            "Big unusual document gallery.txt",
+            "Old budget notes.docx",
+        ];
+        let found: Vec<&str> = Ranker::default()
+            .rank_words("budg", &files, |s| s, |_| 0.0, 10)
+            .into_iter()
+            .map(|r| files[r.index])
+            .collect();
+        // Fuzzy matching would also find b-u-d-g spread over the second one.
+        assert_eq!(found, ["Budget 2026.xlsx", "Old budget notes.docx"]);
+        let both = Ranker::default().rank_words("2026 budget", &files, |s| s, |_| 0.0, 10);
+        assert_eq!(both.len(), 1);
+        assert_eq!(both[0].highlights, vec![[0, 6], [7, 11]]);
     }
 
     #[test]

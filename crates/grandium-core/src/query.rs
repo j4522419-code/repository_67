@@ -17,6 +17,8 @@ pub enum Query<'a> {
     Run(&'a str),
     /// `/clip` or `/clip meeting`: clipboard history.
     Clipboard(&'a str),
+    /// `/files` or `/files budget`: files and folders only.
+    Files(&'a str),
     /// `/` or `/goo`, before a space: picking a slash command.
     Commands(&'a str),
 }
@@ -39,6 +41,7 @@ enum Kind {
     System,
     Run,
     Clipboard,
+    Files,
 }
 
 pub const SLASH_COMMANDS: &[SlashCommand] = &[
@@ -62,6 +65,13 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         description: "Search Wikipedia",
         glyph: "web",
         kind: Kind::Web(&web::WIKIPEDIA),
+    },
+    SlashCommand {
+        name: "files",
+        aliases: &["f", "file"],
+        description: "Find files and folders",
+        glyph: "file",
+        kind: Kind::Files,
     },
     SlashCommand {
         name: "calc",
@@ -106,6 +116,7 @@ impl SlashCommand {
             Kind::System => Query::System(text),
             Kind::Run => Query::Run(text),
             Kind::Clipboard => Query::Clipboard(text),
+            Kind::Files => Query::Files(text),
         }
     }
 }
@@ -170,6 +181,8 @@ mod tests {
         assert_eq!(parse("/sys "), Query::System(""));
         assert_eq!(parse("/clip meeting"), Query::Clipboard("meeting"));
         assert_eq!(parse("/c "), Query::Clipboard(""));
+        assert_eq!(parse("/files tax 2025"), Query::Files("tax 2025"));
+        assert_eq!(parse("/f "), Query::Files(""));
     }
 
     #[test]
@@ -196,6 +209,7 @@ mod tests {
         assert_eq!(names("w")[0], "wiki");
         assert_eq!(names("s"), vec!["system"]);
         assert_eq!(names("c"), vec!["clip", "calc"]);
+        assert_eq!(names("fi"), vec!["files"]);
         assert!(names("zzz").is_empty());
     }
 }
