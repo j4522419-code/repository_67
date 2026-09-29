@@ -175,15 +175,21 @@ mod tests {
         let (events, received) = mpsc::channel();
         watch_folder(folder.clone(), events).expect("couldn't watch the folder");
 
+        // The watcher is ready once Windows has been asked for changes, which
+        // can be a moment after `watch_folder` returns; changes made before
+        // that aren't reported. So keep changing the file until one is.
         let file = folder.join(r"inside\new file.txt");
-        std::fs::write(&file, "hello").unwrap();
-        let reported = loop {
-            match received.recv_timeout(Duration::from_secs(10)) {
-                Ok(FolderEvent::Changed(path)) if path == file => break true,
-                Ok(event) => println!("also reported: {event:?}"),
-                Err(_) => break false,
+        let mut reported = false;
+        'attempts: for attempt in 0..10 {
+            std::fs::write(&file, format!("attempt {attempt}")).unwrap();
+            while let Ok(event) = received.recv_timeout(Duration::from_secs(1)) {
+                if event == FolderEvent::Changed(file.clone()) {
+                    reported = true;
+                    break 'attempts;
+                }
+                println!("also reported: {event:?}");
             }
-        };
+        }
         drop(received);
         let _ = std::fs::remove_dir_all(&folder);
         assert!(reported, "no change reported for {}", file.display());
