@@ -47,12 +47,31 @@ impl OpenWith {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
     pub open_with: OpenWith,
     /// While paused, nothing new is added to clipboard history.
     pub clipboard_paused: bool,
+    /// Where web searches and links open: an installed browser's ID, or
+    /// `None` for Windows' default browser.
+    pub browser: Option<String>,
+    /// The everyday search engine, by keyword (see `web::SEARCH_ENGINES`).
+    pub search_engine: String,
+    /// Whether the first-run setup has been completed.
+    pub setup_done: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            open_with: OpenWith::default(),
+            clipboard_paused: false,
+            browser: None,
+            search_engine: crate::web::GOOGLE.keyword.to_string(),
+            setup_done: false,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -78,6 +97,8 @@ mod tests {
         let settings: Settings = serde_json::from_str(r#"{"openWith":"windowsKey"}"#).unwrap();
         assert_eq!(settings.open_with, OpenWith::WindowsKey);
         assert!(!settings.clipboard_paused);
+        assert_eq!(settings.search_engine, "g");
+        assert!(!settings.setup_done);
         assert_eq!(
             serde_json::from_str::<Settings>("{}").unwrap(),
             Settings::default()
@@ -89,6 +110,9 @@ mod tests {
         let settings = Settings {
             open_with: OpenWith::Both,
             clipboard_paused: true,
+            browser: Some("Firefox-308046B0AF4A39CB".into()),
+            search_engine: "ddg".into(),
+            setup_done: true,
         };
         let json = serde_json::to_string(&settings).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), settings);

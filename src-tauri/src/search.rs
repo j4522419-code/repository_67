@@ -486,7 +486,10 @@ pub fn search(
                 .chain(location)
                 .chain(ranked.into_iter().map(|(_, result)| result))
                 .chain(program)
-                .chain(Some(web_result(web::DEFAULT, text)))
+                .chain(Some(web_result(
+                    web::search_engine(&settings.get().search_engine),
+                    text,
+                )))
                 .collect()
         }
     }
@@ -518,16 +521,26 @@ pub async fn run_action(
                 _ => Launch::Normal,
             };
             let command = details.to_string();
-            in_background(move || platform::run_command(&command, how))
-                .await
-                .map_err(|error| format!("Couldn't open “{details}”: {error}"))?;
+            let lower = command.to_ascii_lowercase();
+            let web_address = lower.starts_with("http://") || lower.starts_with("https://");
+            let browser = app.state::<SettingsStore>().get().browser;
+            in_background(move || {
+                if web_address && matches!(how, Launch::Normal) {
+                    platform::open_link(&command, browser.as_deref())
+                } else {
+                    platform::run_command(&command, how)
+                }
+            })
+            .await
+            .map_err(|error| format!("Couldn't open “{details}”: {error}"))?;
         }
         "web" => {
             let (keyword, text) = details.split_once(':').ok_or("Unknown search.")?;
             let url = web::engine(keyword)
                 .ok_or("Unknown search engine.")?
                 .search_url(text);
-            in_background(move || platform::open_url(&url)).await?;
+            let browser = app.state::<SettingsStore>().get().browser;
+            in_background(move || platform::open_link(&url, browser.as_deref())).await?;
         }
         _ => return Err("Unknown result.".into()),
     }

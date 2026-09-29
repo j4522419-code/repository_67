@@ -1,5 +1,6 @@
 //! Windows APIs, wrapped for the rest of the app.
 
+mod browsers;
 pub mod clipboard;
 mod power;
 mod programs;
@@ -12,12 +13,13 @@ use windows::Win32::System::Com::{
     CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
 };
 
+pub use browsers::{installed_browsers, open_link};
 pub use clipboard::copy_text;
 pub use power::run_system_command;
 pub use programs::{installed_programs, removable_packages, remove_package};
 pub use shell::{
-    app_icon, expand_env, find_program, installed_apps, launch, open_url, run_command,
-    show_in_explorer, start_program, Launch, ShellApp,
+    app_icon, expand_env, find_program, installed_apps, launch, run_command, show_in_explorer,
+    start_program, Launch, ShellApp,
 };
 
 /// Keeps COM initialized on the current thread while alive; the shell

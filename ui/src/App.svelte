@@ -8,6 +8,7 @@
   } from "./lib/backend";
   import Highlighted from "./lib/Highlighted.svelte";
   import ResultIcon from "./lib/ResultIcon.svelte";
+  import Setup from "./lib/Setup.svelte";
 
   let query = $state("");
   let results = $state<SearchResult[]>([]);
@@ -19,6 +20,8 @@
   let confirming = $state<{ result: SearchResult; action: ResultAction } | null>(null);
   let error = $state<string | null>(null);
   let status = $state<AppStatus | null>(null);
+  /** Showing the setup screen instead of search. */
+  let showSetup = $state(false);
   let input = $state<HTMLInputElement>();
   let root = $state<HTMLElement>();
   let latestSearch = 0;
@@ -157,15 +160,30 @@
     input?.select();
   }
 
+  /** Also opens setup if it hasn't been done yet. */
+  function refreshStatus() {
+    return backend.status().then((s) => {
+      status = s;
+      if (s.setupNeeded) showSetup = true;
+    });
+  }
+
   function onShown() {
     focusInput();
     // The keys may have changed from the tray menu.
-    backend.status().then((s) => (status = s));
+    refreshStatus();
+  }
+
+  async function finishSetup() {
+    showSetup = false;
+    await refreshStatus();
+    focusInput();
   }
 
   onMount(() => {
-    backend.status().then((s) => (status = s));
+    refreshStatus();
     const unlisten = backend.onShown(onShown);
+    const unlistenSetup = backend.onShowSetup(() => (showSetup = true));
 
     // The window is sized to fit whatever is on screen.
     const resize = new ResizeObserver(() => {
@@ -176,12 +194,16 @@
     focusInput();
     return () => {
       unlisten.then((stop) => stop());
+      unlistenSetup.then((stop) => stop());
       resize.disconnect();
     };
   });
 </script>
 
 <main class="launcher" bind:this={root}>
+  {#if showSetup}
+    <Setup firstRun={status?.setupNeeded ?? false} onDone={finishSetup} />
+  {:else}
   <div class="search">
     <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
       <circle cx="10.5" cy="10.5" r="6.5" />
@@ -299,6 +321,7 @@
     {/if}
     <span><kbd>Esc</kbd> {confirming ? "cancel" : showActions ? "back" : "close"}</span>
   </footer>
+  {/if}
 </main>
 
 <style>

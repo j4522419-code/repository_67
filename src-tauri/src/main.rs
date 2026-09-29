@@ -12,6 +12,7 @@ mod launcher;
 mod platform;
 mod search;
 mod settings;
+mod setup;
 mod tray;
 
 use tauri::Manager;
@@ -44,6 +45,8 @@ fn main() {
             launcher::set_launcher_height,
             search::search,
             search::run_action,
+            setup::setup_options,
+            setup::save_setup,
         ])
         .on_window_event(launcher::on_window_event)
         .setup(|app| {

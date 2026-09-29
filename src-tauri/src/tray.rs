@@ -1,5 +1,5 @@
-//! The tray icon: opening Grandium without the keyboard, choosing which keys
-//! open it, pausing clipboard history, and quitting.
+//! The tray icon: opening Grandium without the keyboard, settings, choosing
+//! which keys open it, pausing clipboard history, and quitting.
 
 use grandium_core::settings::OpenWith;
 use tauri::menu::{
@@ -8,13 +8,14 @@ use tauri::menu::{
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager};
 
-use crate::launcher;
 use crate::settings::SettingsStore;
+use crate::{launcher, setup};
 
 const TRAY_ID: &str = "grandium";
 
 /// Menu items that change from elsewhere too.
 struct TrayItems {
+    open_with: Vec<(OpenWith, CheckMenuItem<tauri::Wry>)>,
     pause_clipboard: CheckMenuItem<tauri::Wry>,
 }
 
@@ -40,9 +41,11 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             .checked(settings.clipboard_paused)
             .build(app)?;
     let open = MenuItemBuilder::with_id("open", "Open Grandium").build(app)?;
+    let settings_item = MenuItemBuilder::with_id("settings", "Settings…").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "Quit Grandium").build(app)?;
     let menu = MenuBuilder::new(app)
         .item(&open)
+        .item(&settings_item)
         .item(&open_with.build()?)
         .item(&pause_clipboard)
         .separator()
@@ -53,8 +56,9 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         .tooltip(tooltip(app))
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .on_menu_event(move |app, event| match event.id().as_ref() {
+        .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => launcher::show(app),
+            "settings" => setup::open(app),
             "quit" => app.exit(0),
             "pause-clipboard" => {
                 let settings = app
@@ -63,11 +67,15 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
                 sync_clipboard_paused(app, settings.clipboard_paused);
             }
             id => {
-                if let Some(&(choice, _)) = choices
-                    .iter()
-                    .find(|(option, _)| id == format!("open-with:{}", option.label()))
-                {
-                    choose_open_with(app, choice, &choices);
+                let choice = OpenWith::ALL
+                    .into_iter()
+                    .find(|option| id == format!("open-with:{}", option.label()));
+                if let Some(choice) = choice {
+                    let settings = app
+                        .state::<SettingsStore>()
+                        .update(|settings| settings.open_with = choice);
+                    launcher::apply_open_with(app, settings.open_with);
+                    sync_open_with(app, choice);
                 }
             }
         })
@@ -85,7 +93,10 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         tray = tray.icon(icon.clone());
     }
     tray.build(app)?;
-    app.manage(TrayItems { pause_clipboard });
+    app.manage(TrayItems {
+        open_with: choices,
+        pause_clipboard,
+    });
     Ok(())
 }
 
@@ -96,18 +107,13 @@ pub fn sync_clipboard_paused(app: &AppHandle, paused: bool) {
     }
 }
 
-fn choose_open_with(
-    app: &AppHandle,
-    choice: OpenWith,
-    choices: &[(OpenWith, CheckMenuItem<tauri::Wry>)],
-) {
-    let settings = app
-        .state::<SettingsStore>()
-        .update(|settings| settings.open_with = choice);
-    launcher::apply_open_with(app, settings.open_with);
-    // Clicking a checked item unchecks it, so set every item explicitly.
-    for (option, item) in choices {
-        let _ = item.set_checked(*option == choice);
+/// Checks the chosen "Open Grandium with" item (clicking a checked item
+/// unchecks it, so every item is set) and updates the tooltip.
+pub fn sync_open_with(app: &AppHandle, choice: OpenWith) {
+    if let Some(items) = app.try_state::<TrayItems>() {
+        for (option, item) in &items.open_with {
+            let _ = item.set_checked(*option == choice);
+        }
     }
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         let _ = tray.set_tooltip(Some(tooltip(app)));

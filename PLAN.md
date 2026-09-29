@@ -131,6 +131,14 @@ Type `/` to see them all; Tab or Enter picks one.
 - Notes are plain Markdown files in `Documents\Grandium\Notes`, so you own them.
 - They're searchable from the main bar and open in your default editor.
 
+### First-run setup
+- On first run (and later from the tray's **Settings…**) you choose:
+  - the **browser** web searches and links open in (any installed browser,
+    or Windows' default),
+  - the **search engine** for everyday web searches (Google, Bing,
+    DuckDuckGo, Brave Search or Ecosia),
+  - the **keys** that open Grandium (Alt+Space, the Windows key, or both).
+
 ### App shell and settings
 - Tray icon (Open, Settings, Pause clipboard, Quit), start with Windows, and a
   single running instance.

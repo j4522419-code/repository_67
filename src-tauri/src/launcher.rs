@@ -16,6 +16,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, S
 use crate::apps;
 use crate::platform::clipboard::foreground_window;
 use crate::platform::windows_key::{self, WindowsKeyListener};
+use crate::settings::SettingsStore;
 
 /// Label of the launcher window in `tauri.conf.json`.
 const LABEL: &str = "launcher";
@@ -72,6 +73,8 @@ pub struct AppStatus {
     hotkey_error: Option<String>,
     /// Set when the Windows key was chosen but couldn't be used.
     windows_key_error: Option<String>,
+    /// The first-run setup hasn't been completed yet.
+    setup_needed: bool,
 }
 
 /// Claims the keys chosen in settings and lets go of the others. Problems
@@ -128,6 +131,7 @@ pub fn status(app: &AppHandle) -> AppStatus {
         keys,
         hotkey_error,
         windows_key_error,
+        setup_needed: !app.state::<SettingsStore>().get().setup_done,
     }
 }
 

@@ -12,6 +12,27 @@ export interface AppStatus {
   hotkeyError: string | null;
   /** Set when the Windows key was chosen but couldn't be used. */
   windowsKeyError: string | null;
+  /** The first-run setup hasn't been completed yet. */
+  setupNeeded: boolean;
+}
+
+export interface Choice {
+  id: string;
+  name: string;
+}
+
+export interface SetupChoices {
+  /** An installed browser's ID, or null for Windows' default browser. */
+  browser: string | null;
+  searchEngine: string;
+  openWith: string;
+}
+
+export interface SetupOptions {
+  browsers: Choice[];
+  searchEngines: Choice[];
+  openWith: Choice[];
+  current: SetupChoices;
 }
 
 export interface ResultAction {
@@ -57,6 +78,7 @@ export interface SearchResult {
 }
 
 const inTauri = "__TAURI_INTERNALS__" in window;
+let previewSetupDone = false;
 
 function previewStatus(): AppStatus {
   const params = new URLSearchParams(location.search);
@@ -67,6 +89,7 @@ function previewStatus(): AppStatus {
     keys: [...(hotkeyError ? [] : ["Alt+Space"]), ...(both ? ["Windows key"] : [])],
     hotkeyError,
     windowsKeyError: null,
+    setupNeeded: params.has("setup") && !previewSetupDone,
   };
 }
 
@@ -98,6 +121,43 @@ export const backend = {
 
   iconUrl(icon: IconRef): string | null {
     return inTauri ? convertFileSrc(icon.key, icon.scheme) : null;
+  },
+
+  setupOptions(): Promise<SetupOptions> {
+    return inTauri
+      ? invoke<SetupOptions>("setup_options")
+      : Promise.resolve({
+          browsers: [
+            { id: "Brave", name: "Brave" },
+            { id: "Google Chrome", name: "Google Chrome" },
+            { id: "Microsoft Edge", name: "Microsoft Edge" },
+            { id: "Firefox-308046B0AF4A39CB", name: "Mozilla Firefox" },
+          ],
+          searchEngines: [
+            { id: "g", name: "Google" },
+            { id: "b", name: "Bing" },
+            { id: "ddg", name: "DuckDuckGo" },
+            { id: "brave", name: "Brave Search" },
+            { id: "ecosia", name: "Ecosia" },
+          ],
+          openWith: [
+            { id: "altSpace", name: "Alt+Space" },
+            { id: "windowsKey", name: "Windows key" },
+            { id: "both", name: "Both" },
+          ],
+          current: { browser: null, searchEngine: "g", openWith: "altSpace" },
+        });
+  },
+
+  saveSetup(choices: SetupChoices): Promise<void> {
+    if (inTauri) return invoke("save_setup", { choices });
+    previewSetupDone = true;
+    return Promise.resolve();
+  },
+
+  /** Called when the tray's "Settings…" asks for the setup screen. */
+  onShowSetup(callback: () => void): Promise<UnlistenFn> {
+    return inTauri ? listen("show-setup", callback) : Promise.resolve(() => {});
   },
 
   /** Called every time the launcher window is shown. */
