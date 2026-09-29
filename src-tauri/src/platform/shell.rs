@@ -6,7 +6,10 @@
 //! `shell:AppsFolder\<id>` starts either kind.
 
 use std::os::windows::process::CommandExt;
+use std::path::Path;
 use std::process::Command;
+
+use grandium_core::run;
 
 use windows::core::{w, Interface, GUID, HSTRING, PCWSTR, PWSTR};
 
@@ -16,7 +19,9 @@ use windows::Win32::Graphics::Gdi::{
     BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP,
 };
 use windows::Win32::Storage::EnhancedStorage::PKEY_Link_TargetParsingPath;
+use windows::Win32::Storage::FileSystem::SearchPathW;
 use windows::Win32::System::Com::CoTaskMemFree;
+use windows::Win32::System::Environment::ExpandEnvironmentStringsW;
 use windows::Win32::UI::Shell::{
     BHID_EnumItems, FOLDERID_AppsFolder, IEnumShellItems, IShellItem, IShellItem2,
     IShellItemImageFactory, SHCreateItemFromParsingName, SHGetKnownFolderItem,
@@ -26,7 +31,7 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
-use super::message;
+use super::{message, registry};
 
 /// An installed app, as the shell lists it.
 pub struct ShellApp {
@@ -122,20 +127,103 @@ pub fn launch(id: &str, how: Launch) -> Result<(), String> {
         // Run it the way the shell would, including verbs like "runas", and
         // finish before returning: the calling thread may exit right after.
         fMask: SEE_MASK_INVOKEIDLIST | SEE_MASK_FLAG_NO_UI | SEE_MASK_NOASYNC,
-        lpVerb: match how {
-            Launch::Normal => PCWSTR::null(),
-            Launch::AsAdmin => w!("runas"),
-        },
+        lpVerb: verb(how),
         lpFile: PCWSTR(file.as_ptr()),
         nShow: SW_SHOWNORMAL.0,
         ..Default::default()
     };
-    match unsafe { ShellExecuteExW(&mut info) } {
+    execute(&mut info)
+}
+
+fn verb(how: Launch) -> PCWSTR {
+    match how {
+        Launch::Normal => PCWSTR::null(),
+        Launch::AsAdmin => w!("runas"),
+    }
+}
+
+fn execute(info: &mut SHELLEXECUTEINFOW) -> Result<(), String> {
+    match unsafe { ShellExecuteExW(info) } {
         Ok(()) => Ok(()),
         // The user said no to the administrator prompt; nothing went wrong.
         Err(e) if e.code() == ERROR_CANCELLED.to_hresult() => Ok(()),
         Err(e) => Err(e.message()),
     }
+}
+
+/// Opens what was typed, the way the Run box (Win+R) does: a path,
+/// folder or link opens as it is; anything else is a program, found through
+/// App Paths and the PATH, followed by its arguments.
+pub fn run_command(text: &str, how: Launch) -> Result<(), String> {
+    let expanded = expand_env(text.trim());
+    let (file, args) = if Path::new(&expanded).exists() || run::looks_like_location(&expanded) {
+        (expanded, String::new())
+    } else {
+        run::split_command_line(&expanded)
+    };
+    let file = HSTRING::from(file);
+    let args = HSTRING::from(args);
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_FLAG_NO_UI | SEE_MASK_NOASYNC,
+        lpVerb: verb(how),
+        lpFile: PCWSTR(file.as_ptr()),
+        lpParameters: if args.is_empty() {
+            PCWSTR::null()
+        } else {
+            PCWSTR(args.as_ptr())
+        },
+        nShow: SW_SHOWNORMAL.0,
+        ..Default::default()
+    };
+    execute(&mut info)
+}
+
+/// Expands environment variables: `%temp%` becomes
+/// `C:\Users\you\AppData\Local\Temp`.
+pub fn expand_env(text: &str) -> String {
+    let source = HSTRING::from(text);
+    unsafe {
+        let needed = ExpandEnvironmentStringsW(&source, None);
+        if needed == 0 {
+            return text.to_string();
+        }
+        let mut buffer = vec![0u16; needed as usize];
+        let written = ExpandEnvironmentStringsW(&source, Some(&mut buffer));
+        if written == 0 || written as usize > buffer.len() {
+            return text.to_string();
+        }
+        // `written` counts the terminating zero.
+        String::from_utf16_lossy(&buffer[..written as usize - 1])
+    }
+}
+
+/// Where the Run box would find the program `name`: its registered App
+/// Path if it has one, otherwise the first match on the PATH.
+pub fn find_program(name: &str) -> Option<String> {
+    let file = if name.contains('.') {
+        name.to_string()
+    } else {
+        format!("{name}.exe")
+    };
+    let key = format!(r"Software\Microsoft\Windows\CurrentVersion\App Paths\{file}");
+    for root in [registry::HKEY_CURRENT_USER, registry::HKEY_LOCAL_MACHINE] {
+        if let Some(path) = registry::read_string(root, &key, None) {
+            return Some(path.trim_matches('"').to_string());
+        }
+    }
+    let mut buffer = vec![0u16; 1024];
+    let len = unsafe {
+        SearchPathW(
+            PCWSTR::null(),
+            &HSTRING::from(name),
+            w!(".exe"),
+            Some(&mut buffer),
+            None,
+        )
+    };
+    (len > 0 && (len as usize) < buffer.len())
+        .then(|| String::from_utf16_lossy(&buffer[..len as usize]))
 }
 
 /// Opens File Explorer with `path` selected.

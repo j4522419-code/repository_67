@@ -4,7 +4,7 @@ use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Engine {
-    /// Typed before the search text: `g cats`.
+    /// Short name that identifies the engine in result IDs.
     pub keyword: &'static str,
     pub name: &'static str,
     /// `{query}` is replaced by the encoded search text.

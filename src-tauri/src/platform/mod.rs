@@ -2,6 +2,7 @@
 
 mod clipboard;
 mod power;
+mod registry;
 mod shell;
 pub mod windows_key;
 
@@ -11,7 +12,10 @@ use windows::Win32::System::Com::{
 
 pub use clipboard::copy_text;
 pub use power::run_system_command;
-pub use shell::{app_icon, installed_apps, launch, open_url, show_in_explorer, Launch, ShellApp};
+pub use shell::{
+    app_icon, expand_env, find_program, installed_apps, launch, open_url, run_command,
+    show_in_explorer, Launch, ShellApp,
+};
 
 /// Keeps COM initialized on the current thread while alive; the shell
 /// APIs need it.

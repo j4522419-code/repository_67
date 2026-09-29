@@ -40,8 +40,17 @@
     error = null;
   }
 
+  /** Puts a slash command in the search box, ready for what comes after. */
+  function fill(result: SearchResult) {
+    if (result.fill === null) return false;
+    query = result.fill;
+    input?.focus();
+    return true;
+  }
+
   async function run(result: SearchResult, action: ResultAction) {
     error = null;
+    if (action.id === "fill" && fill(result)) return;
     const confirmed = confirming?.result.id === result.id && confirming.action.id === action.id;
     if (action.confirm && !confirmed) {
       confirming = { result, action };
@@ -89,7 +98,8 @@
         break;
       case "Tab":
         event.preventDefault();
-        toggleActions();
+        // Tab completes a slash command, like in a terminal.
+        if (!(current && !showActions && fill(current))) toggleActions();
         break;
       case "Enter": {
         event.preventDefault();
@@ -152,7 +162,7 @@
       bind:value={query}
       onkeydown={onKeydown}
       type="text"
-      placeholder="Search apps, files, clipboard…"
+      placeholder="Search apps, or type / for commands"
       spellcheck="false"
       autocomplete="off"
       aria-label="Search"
@@ -207,12 +217,17 @@
             glyph={result.glyph}
             title={result.title}
           />
-          <span class="title"><Highlighted text={result.title} ranges={result.highlights} /></span>
+          <span class="title">
+            <Highlighted text={result.title} ranges={result.highlights} />
+            {#if result.subtitle}<span class="subtitle">{result.subtitle}</span>{/if}
+          </span>
           <span class="meta">
             {i === selected ? `${result.actions[0].label} ↵` : result.kind}
           </span>
         </button>
       {/each}
+    {:else if /^\/\S+\s+$/.test(query)}
+      <div class="empty">Now type after {query.trim()}…</div>
     {:else if query.trim()}
       <div class="empty">No matches for “{query.trim()}”</div>
     {/if}
@@ -233,7 +248,7 @@
     {#if confirming}
       <span><kbd>↵</kbd> {confirming.action.label}</span>
     {:else if results.length}
-      <span><kbd>↑</kbd><kbd>↓</kbd> select · <kbd>↵</kbd> open · <kbd>Tab</kbd> actions</span>
+      <span><kbd>↑</kbd><kbd>↓</kbd> select · <kbd>↵</kbd> open · <kbd>Tab</kbd> {current?.fill ? "complete" : "actions"}</span>
     {:else if status && !status.keys.length}
       <span>Grandium keeps running in the tray</span>
     {:else}
@@ -330,6 +345,12 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: 15px;
+  }
+
+  .subtitle {
+    margin-left: 10px;
+    font-size: 13px;
+    color: var(--text-tertiary);
   }
 
   .meta {

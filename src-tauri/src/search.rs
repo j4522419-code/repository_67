@@ -6,11 +6,11 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use grandium_core::apps::{can_run_as_admin, has_file_location};
-use grandium_core::query::{self, Query};
+use grandium_core::query::{self, Query, SlashCommand};
 use grandium_core::rank::Ranker;
 use grandium_core::system::{self, Command};
 use grandium_core::usage::Usage;
-use grandium_core::{calc, web};
+use grandium_core::{calc, run, web};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State, WebviewWindow};
 
@@ -55,12 +55,14 @@ fn unix_now() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
-#[derive(Serialize)]
+#[derive(Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchResult {
     /// `<kind>:<details>`, e.g. `app:<app id>` or `calc:14400`.
     id: String,
     title: String,
+    /// Smaller text after the title, like the folder `%temp%` stands for.
+    subtitle: Option<String>,
     kind: &'static str,
     /// An app icon: what to pass to the `icon` URL scheme.
     icon: Option<String>,
@@ -70,6 +72,8 @@ pub struct SearchResult {
     highlights: Vec<[u32; 2]>,
     /// The first action is what Enter does.
     actions: Vec<ResultAction>,
+    /// For slash commands: the text to put in the search box when picked.
+    fill: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -112,6 +116,7 @@ fn app_result(app: &App, highlights: Vec<[u32; 2]>) -> SearchResult {
         glyph: None,
         highlights,
         actions,
+        ..Default::default()
     }
 }
 
@@ -125,6 +130,7 @@ fn calc_result(value: f64) -> SearchResult {
         glyph: Some("calculator"),
         highlights: Vec::new(),
         actions: vec![action("copy", "Copy result", "Enter")],
+        ..Default::default()
     }
 }
 
@@ -142,6 +148,7 @@ fn web_result(engine: &web::Engine, text: &str) -> SearchResult {
         glyph: Some("web"),
         highlights: Vec::new(),
         actions: vec![action("open", "Search", "Enter")],
+        ..Default::default()
     }
 }
 
@@ -161,6 +168,52 @@ fn system_result(command: &'static Command, highlights: Vec<[u32; 2]>) -> Search
             confirm: command.confirm,
             ..action("run", command.name, "Enter")
         }],
+        ..Default::default()
+    }
+}
+
+/// Something typed like into the Run box: a path, `%temp%`, a program.
+/// `resolved` is what it stands for, shown under the title.
+fn run_result(text: &str, resolved: Option<String>, glyph: &'static str) -> SearchResult {
+    SearchResult {
+        id: format!("run:{text}"),
+        title: text.to_string(),
+        subtitle: resolved.filter(|resolved| resolved != text),
+        kind: "Run",
+        glyph: Some(glyph),
+        actions: vec![
+            action("open", "Open", "Enter"),
+            action("runAsAdmin", "Run as administrator", "Ctrl+Shift+Enter"),
+        ],
+        ..Default::default()
+    }
+}
+
+fn location_result(text: &str) -> SearchResult {
+    let glyph = if text.contains("://") {
+        "web"
+    } else {
+        "folder"
+    };
+    run_result(text, Some(platform::expand_env(text)), glyph)
+}
+
+fn slash_command_result(command: &SlashCommand) -> SearchResult {
+    let aliases: Vec<String> = command.aliases.iter().map(|a| format!("/{a}")).collect();
+    let subtitle = if aliases.is_empty() {
+        command.description.to_string()
+    } else {
+        format!("{} · also {}", command.description, aliases.join(", "))
+    };
+    SearchResult {
+        id: format!("cmd:{}", command.name),
+        title: format!("/{}", command.name),
+        subtitle: Some(subtitle),
+        kind: "Command",
+        glyph: Some(command.glyph),
+        actions: vec![action("fill", "Choose", "Enter")],
+        fill: Some(format!("/{} ", command.name)),
+        ..Default::default()
     }
 }
 
@@ -193,9 +246,21 @@ pub fn search(
         Query::System(text) => system_matches(&mut ranker, text)
             .map(|(_, result)| result)
             .collect(),
+        Query::Run("") => Vec::new(),
+        Query::Run(text) => vec![run_result(text, Some(platform::expand_env(text)), "run")],
+        Query::Commands(prefix) => query::matching_commands(prefix)
+            .into_iter()
+            .map(slash_command_result)
+            .collect(),
         Query::Everything("") => Vec::new(),
         Query::Everything(text) => {
+            // Things that show up above or below the ranked matches.
             let calc = calc::evaluate(text, true).map(calc_result);
+            let location = run::looks_like_location(text).then(|| location_result(text));
+            let program = (run::looks_like_program(text))
+                .then(|| platform::find_program(text))
+                .flatten()
+                .map(|path| run_result(text, Some(path), "run"));
             let apps = index.apps();
             let mut ranked: Vec<(f64, SearchResult)> = ranker
                 .rank(
@@ -210,11 +275,13 @@ pub fn search(
                 .collect();
             ranked.extend(system_matches(&mut ranker, text));
             ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
-            // Leave room for the answer on top and the web search below.
-            ranked.truncate(MAX_RESULTS - 1 - usize::from(calc.is_some()));
+            let extras = [calc.is_some(), location.is_some(), program.is_some(), true];
+            ranked.truncate(MAX_RESULTS - extras.iter().filter(|&&shown| shown).count());
 
             calc.into_iter()
+                .chain(location)
                 .chain(ranked.into_iter().map(|(_, result)| result))
+                .chain(program)
                 .chain(Some(web_result(web::DEFAULT, text)))
                 .collect()
         }
@@ -235,6 +302,16 @@ pub async fn run_action(
         "calc" => {
             let owner = window.hwnd().map_err(|e| e.to_string())?;
             platform::copy_text(owner, details)?;
+        }
+        "run" => {
+            let how = match action.as_str() {
+                "runAsAdmin" => Launch::AsAdmin,
+                _ => Launch::Normal,
+            };
+            let command = details.to_string();
+            in_background(move || platform::run_command(&command, how))
+                .await
+                .map_err(|error| format!("Couldn't open “{details}”: {error}"))?;
         }
         "web" => {
             let (keyword, text) = details.split_once(':').ok_or("Unknown search.")?;

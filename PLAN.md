@@ -66,17 +66,19 @@ a Linux build environment.
 | `Tab` | Menu of every action for the selected result |
 | `Esc` | Cancel a confirmation, clear the text if there is any, otherwise hide |
 
-### Prefixes (optional; plain typing searches everything)
-| Prefix | Searches |
+### Slash commands (optional; plain typing searches everything)
+Type `/` to see them all; Tab or Enter picks one.
+
+| Command | What it does |
 |---|---|
-| *(none)* | Everything, mixed and ranked |
-| `=` | Calculator only (math is also detected without it) |
-| `f ` | Files only |
-| `c ` | Clipboard history |
-| `;` | Snippets |
-| `n ` | Notes. `n buy milk` + Enter saves a new note |
-| `g ` `yt ` `w ` | Google, YouTube, Wikipedia (you can add your own) |
-| `>` | All system commands |
+| *(none)* | Searches everything, mixed and ranked |
+| `/google` `/g`, `/youtube` `/yt`, `/wiki` `/w` | Searches that site |
+| `/calc` or `=` | Calculator only (math is also detected without it) |
+| `/run` | Runs anything, like Win+R. Paths, `%temp%`-style variables, `shell:` links and program names like `regedit` also work without it. |
+| `/system` `/sys` | System commands |
+| `/clip` | Clipboard history (M3) |
+| `/files` | Files only (M4) |
+| `/snip`, `/note` | Snippets and notes (M5). `/note buy milk` + Enter saves a note |
 
 ---
 

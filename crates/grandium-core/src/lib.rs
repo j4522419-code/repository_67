@@ -7,6 +7,7 @@ pub mod icon;
 pub mod layout;
 pub mod query;
 pub mod rank;
+pub mod run;
 pub mod settings;
 pub mod system;
 pub mod usage;

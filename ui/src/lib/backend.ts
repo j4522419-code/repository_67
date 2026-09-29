@@ -25,6 +25,8 @@ export interface ResultAction {
 export interface SearchResult {
   id: string;
   title: string;
+  /** Smaller text after the title, like the folder `%temp%` stands for. */
+  subtitle: string | null;
   kind: string;
   /** An app icon: key for the `icon` URL scheme, see `iconUrl`. */
   icon: string | null;
@@ -34,6 +36,8 @@ export interface SearchResult {
   highlights: [number, number][];
   /** The first action is what Enter does. */
   actions: ResultAction[];
+  /** For slash commands: the text to put in the search box when picked. */
+  fill: string | null;
 }
 
 const inTauri = "__TAURI_INTERNALS__" in window;
