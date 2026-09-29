@@ -25,9 +25,11 @@ use windows::Win32::System::Environment::ExpandEnvironmentStringsW;
 use windows::Win32::UI::Shell::{
     BHID_EnumItems, FOLDERID_AppsFolder, FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Downloads,
     IEnumShellItems, IShellItem, IShellItem2, IShellItemImageFactory, SHCreateItemFromParsingName,
-    SHGetKnownFolderItem, SHGetKnownFolderPath, ShellExecuteExW, ShellExecuteW, KF_FLAG_DEFAULT,
+    SHFileOperationW, SHGetKnownFolderItem, SHGetKnownFolderPath, ShellExecuteExW, ShellExecuteW,
+    FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FO_DELETE, KF_FLAG_DEFAULT,
     SEE_MASK_FLAG_NO_UI, SEE_MASK_INVOKEIDLIST, SEE_MASK_NOASYNC, SHELLEXECUTEINFOW,
-    SIGDN_NORMALDISPLAY, SIGDN_PARENTRELATIVEPARSING, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY,
+    SHFILEOPSTRUCTW, SIGDN_NORMALDISPLAY, SIGDN_PARENTRELATIVEPARSING, SIIGBF_BIGGERSIZEOK,
+    SIIGBF_ICONONLY,
 };
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
@@ -270,6 +272,24 @@ pub fn show_in_explorer(path: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Moves a file to the Recycle Bin, without asking first.
+pub fn recycle(path: &str) -> Result<(), String> {
+    // A list of paths, each ending in a zero, with one more zero at the end.
+    let from: Vec<u16> = path.encode_utf16().chain([0, 0]).collect();
+    let flags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI;
+    let mut operation = SHFILEOPSTRUCTW {
+        wFunc: FO_DELETE,
+        pFrom: PCWSTR(from.as_ptr()),
+        fFlags: flags.0 as u16,
+        ..Default::default()
+    };
+    match unsafe { SHFileOperationW(&mut operation) } {
+        0 if operation.fAnyOperationsAborted.as_bool() => Err("Deleting was cancelled.".into()),
+        0 => Ok(()),
+        code => Err(format!("Windows couldn't delete it (error {code}).")),
+    }
+}
+
 /// Opens a web address in the default browser.
 pub fn open_url(url: &str) -> Result<(), String> {
     let result = unsafe {
@@ -365,6 +385,15 @@ unsafe fn bitmap_to_png(bitmap: HBITMAP) -> Result<Vec<u8>, String> {
 mod tests {
     use super::*;
     use crate::platform::Com;
+
+    #[test]
+    fn recycles_files() {
+        let file =
+            std::env::temp_dir().join(format!("grandium-recycle-{}.txt", std::process::id()));
+        std::fs::write(&file, "bye").unwrap();
+        recycle(&file.to_string_lossy()).expect("couldn't recycle");
+        assert!(!file.exists());
+    }
 
     /// Runs against the real shell of the machine running the tests (a
     /// GitHub Windows runner in CI) and prints what it finds.

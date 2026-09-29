@@ -2,6 +2,7 @@
 
 mod browsers;
 pub mod clipboard;
+pub mod locale;
 mod power;
 mod programs;
 pub mod protect;
@@ -18,8 +19,8 @@ pub use clipboard::copy_text;
 pub use power::run_system_command;
 pub use programs::{installed_programs, removable_packages, remove_package};
 pub use shell::{
-    app_icon, expand_env, file_icon, find_program, installed_apps, launch, open_path, run_command,
-    show_in_explorer, start_program, user_folders, Launch, ShellApp,
+    app_icon, expand_env, file_icon, find_program, installed_apps, launch, open_path, recycle,
+    run_command, show_in_explorer, start_program, user_folders, Launch, ShellApp,
 };
 
 /// Keeps COM initialized on the current thread while alive; the shell

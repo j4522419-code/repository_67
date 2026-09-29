@@ -6,7 +6,7 @@ the web, run system commands, get back anything you copied, paste saved snippets
 and jot down quick notes. It runs in the tray, starts with Windows and keeps all
 data on your PC.
 
-*Status: M0–M4 built (launcher, app search, calculator/web/system commands, clipboard history, file search), plus slash commands, Run-box commands, and uninstalling apps. Waiting for testing on Windows. Last updated 2026-09-29.*
+*Status: M0–M5 built (launcher, app search, calculator/web/system commands, clipboard history, file search, snippets and quick notes), plus slash commands, Run-box commands, and uninstalling apps. Waiting for testing on Windows. Last updated 2026-09-29.*
 
 ---
 
@@ -78,7 +78,8 @@ Type `/` to see them all; Tab or Enter picks one.
 | `/system` `/sys` | System commands |
 | `/clip` | Clipboard history (M3) |
 | `/files` `/f` | Files and folders only. On its own, it lists your most recently changed files. |
-| `/snip`, `/note` | Snippets and notes (M5). `/note buy milk` + Enter saves a note |
+| `;addr` or `/snip` | Snippets: `;addr` + Enter pastes the snippet with the keyword `addr`. `/snip` on its own lists them all. |
+| `/note` `/n` | `/note buy milk` + Enter saves a note. `/note` on its own lists your notes, newest first. |
 
 ---
 
@@ -135,15 +136,31 @@ Type `/` to see them all; Tab or Enter picks one.
   OneDrive files that live only online aren't downloaded.
 
 ### Snippets
-- Saved text that can be pasted from the search bar, e.g. `;addr` → your address.
-- Placeholders: `{date}`, `{time}`, `{clipboard}`.
+- Saved text pasted from the launcher: `;addr` + Enter pastes your address into
+  the app you were using. Typing words from a snippet's text finds it too, and
+  the best couple of matches show up in normal searches.
+- Made and changed on an editor screen: pick **New snippet** (at the end of
+  `/snip`, or offered when you type a `;keyword` that isn't taken), **Edit**
+  (Ctrl+E) on a snippet, or **Save as snippet** (Ctrl+S) on copied text in
+  clipboard history. Ctrl+Enter saves.
+- Placeholders filled in when pasted: `{date}` and `{time}` (in your region's
+  format) and `{clipboard}`.
+- Actions: **Paste** (Enter), **Copy** (Ctrl+Enter), **Edit** (Ctrl+E),
+  **Delete** (Ctrl+Delete, asks first).
+- Kept in `%APPDATA%\Grandium\snippets.json`.
 - *Note:* expanding snippets as you type in other apps needs a keyboard hook,
   which is planned for **after** v1 (see §8).
 
 ### Quick notes
-- `n <text>` + Enter saves a note instantly.
-- Notes are plain Markdown files in `Documents\Grandium\Notes`, so you own them.
-- They're searchable from the main bar and open in your default editor.
+- `/note buy milk` + Enter saves a note instantly; Ctrl+Enter saves and opens it.
+- Notes are plain text files in `Documents\Grandium\Notes`, named after their
+  first line, so you own them (and they sync if Documents is in OneDrive).
+  `.md` files you put there count too.
+- Searchable by title and text from the main bar; the selected note shows a
+  preview. Edits made in any editor show up within a couple of seconds.
+- Actions: **Open** in your default editor (Enter), **Copy text** (Ctrl+Enter),
+  **Open file location** (Ctrl+Shift+Enter), **Delete** to the Recycle Bin
+  (Ctrl+Delete, asks first).
 
 ### First-run setup
 - On first run (and later from the tray's **Settings…**) you choose:
@@ -256,7 +273,7 @@ Each milestone ends with a downloadable `.exe` that you try before we move on.
 | **M2** | **Calculator, web search, system commands** | `=2^10` shows 1024, `yt lofi` opens YouTube, `lock` locks the PC |
 | **M3** | **Clipboard history** | Copy 3 things, type `c`, and paste the first one into Notepad |
 | **M4** | **File search** | A file saved to Downloads is findable within seconds |
-| **M5** | **Snippets and quick notes** | `;addr` pastes your address, and `n test` creates a note file |
+| **M5** | **Snippets and quick notes** | `;addr` pastes your address, and `/note test` creates a note file |
 | **M6** | **Settings and polish → v1.0** | Every setting works, the installer works, the first-run screen shows, and the release is published |
 
 ---

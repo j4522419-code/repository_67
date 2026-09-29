@@ -19,6 +19,10 @@ pub enum Query<'a> {
     Clipboard(&'a str),
     /// `/files` or `/files budget`: files and folders only.
     Files(&'a str),
+    /// `;addr`, `/snip` or `/snip addr`: snippets.
+    Snippets(&'a str),
+    /// `/note` or `/note buy milk`: notes, and saving a new one.
+    Notes(&'a str),
     /// `/` or `/goo`, before a space: picking a slash command.
     Commands(&'a str),
 }
@@ -42,6 +46,8 @@ enum Kind {
     Run,
     Clipboard,
     Files,
+    Snippets,
+    Notes,
 }
 
 pub const SLASH_COMMANDS: &[SlashCommand] = &[
@@ -72,6 +78,20 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         description: "Find files and folders",
         glyph: "file",
         kind: Kind::Files,
+    },
+    SlashCommand {
+        name: "snip",
+        aliases: &["snippet", "snippets"],
+        description: "Paste a snippet, or make one (also just type ;)",
+        glyph: "snippet",
+        kind: Kind::Snippets,
+    },
+    SlashCommand {
+        name: "note",
+        aliases: &["n", "notes"],
+        description: "Save a quick note, or find one",
+        glyph: "note",
+        kind: Kind::Notes,
     },
     SlashCommand {
         name: "calc",
@@ -117,6 +137,8 @@ impl SlashCommand {
             Kind::Run => Query::Run(text),
             Kind::Clipboard => Query::Clipboard(text),
             Kind::Files => Query::Files(text),
+            Kind::Snippets => Query::Snippets(text),
+            Kind::Notes => Query::Notes(text),
         }
     }
 }
@@ -142,6 +164,9 @@ pub fn parse(input: &str) -> Query<'_> {
     let input = input.trim_start();
     if let Some(rest) = input.strip_prefix('=') {
         return Query::Calculator(rest.trim());
+    }
+    if let Some(rest) = input.strip_prefix(';') {
+        return Query::Snippets(rest.trim());
     }
     if let Some(rest) = input.strip_prefix('/') {
         return match rest.split_once(char::is_whitespace) {
@@ -183,12 +208,21 @@ mod tests {
         assert_eq!(parse("/c "), Query::Clipboard(""));
         assert_eq!(parse("/files tax 2025"), Query::Files("tax 2025"));
         assert_eq!(parse("/f "), Query::Files(""));
+        assert_eq!(parse("/snip addr"), Query::Snippets("addr"));
+        assert_eq!(parse("/note buy milk "), Query::Notes("buy milk"));
+        assert_eq!(parse("/n "), Query::Notes(""));
     }
 
     #[test]
     fn equals_sign_is_a_calculator_shortcut() {
         assert_eq!(parse("=2+2"), Query::Calculator("2+2"));
         assert_eq!(parse(" = 5 "), Query::Calculator("5"));
+    }
+
+    #[test]
+    fn semicolon_finds_snippets() {
+        assert_eq!(parse(";addr"), Query::Snippets("addr"));
+        assert_eq!(parse(" ; "), Query::Snippets(""));
     }
 
     #[test]
@@ -207,7 +241,8 @@ mod tests {
         assert_eq!(names("goo"), vec!["google"]);
         // "w" is Wikipedia's alias, so it comes first.
         assert_eq!(names("w")[0], "wiki");
-        assert_eq!(names("s"), vec!["system"]);
+        assert_eq!(names("s"), vec!["snip", "system"]);
+        assert_eq!(names("n"), vec!["note"]);
         assert_eq!(names("c"), vec!["clip", "calc"]);
         assert_eq!(names("fi"), vec!["files"]);
         assert!(names("zzz").is_empty());

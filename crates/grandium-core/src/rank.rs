@@ -157,6 +157,17 @@ impl Ranker {
     }
 }
 
+/// The parts of `highlights` that fall within `title`, for items ranked on
+/// their title followed by more text.
+pub fn clip_highlights(highlights: Vec<[u32; 2]>, title: &str) -> Vec<[u32; 2]> {
+    let len = utf16_len(title);
+    highlights
+        .into_iter()
+        .filter(|[start, _]| *start < len)
+        .map(|[start, end]| [start, end.min(len)])
+        .collect()
+}
+
 fn utf16_len(s: &str) -> u32 {
     s.encode_utf16().count() as u32
 }
@@ -272,6 +283,12 @@ mod tests {
         let both = Ranker::default().rank_words("2026 budget", &files, |s| s, |_| 0.0, 10);
         assert_eq!(both.len(), 1);
         assert_eq!(both[0].highlights, vec![[0, 6], [7, 11]]);
+    }
+
+    #[test]
+    fn clips_highlights_to_the_title() {
+        let ranges = vec![[0, 2], [3, 6], [8, 9]];
+        assert_eq!(clip_highlights(ranges, "abcde"), vec![[0, 2], [3, 5]]);
     }
 
     #[test]

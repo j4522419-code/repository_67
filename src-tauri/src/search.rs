@@ -9,19 +9,23 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use grandium_core::apps::{can_run_as_admin, has_file_location};
 use grandium_core::clipboard::{self as history, Content, Entry};
 use grandium_core::file_index::{self, FileIndex, Meta};
+use grandium_core::notes::{self, Note};
 use grandium_core::query::{self, Query, SlashCommand};
-use grandium_core::rank::Ranker;
+use grandium_core::rank::{self, Ranker};
+use grandium_core::snippets::{self, Snippet};
 use grandium_core::system::{self, Command};
 use grandium_core::usage::Usage;
 use grandium_core::{calc, run, uninstall, web};
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State, WebviewWindow};
+use tauri::{AppHandle, Manager, WebviewWindow};
 
 use crate::apps::{App, AppIndex, Uninstall};
 use crate::clipboard::{self, ClipboardStore};
 use crate::file_search::FileSearch;
+use crate::notes::NoteStore;
 use crate::platform::{self, Com, Launch};
 use crate::settings::SettingsStore;
+use crate::snippets::SnippetStore;
 use crate::{files, icons, launcher, tray};
 
 const MAX_RESULTS: usize = 8;
@@ -32,6 +36,13 @@ const MAX_FILE_RESULTS: usize = 50;
 const FILES_AMONG_EVERYTHING: usize = 3;
 /// Files rank a little below apps and commands that match as well.
 const FILE_WEIGHT: f64 = 0.7;
+const MAX_SNIPPET_RESULTS: usize = 50;
+const MAX_NOTE_RESULTS: usize = 50;
+/// How many snippets and notes can show up among everything else.
+const SNIPPETS_AMONG_EVERYTHING: usize = 2;
+const NOTES_AMONG_EVERYTHING: usize = 2;
+const SNIPPET_WEIGHT: f64 = 0.9;
+const NOTE_WEIGHT: f64 = 0.8;
 
 pub struct SearchState {
     ranker: Mutex<Ranker>,
@@ -300,6 +311,15 @@ fn clipboard_result(entry: &Entry, highlights: Vec<[u32; 2]>, now: u64) -> Searc
     } else {
         action("pin", "Pin", "Ctrl+P")
     };
+    let mut actions = vec![
+        action("paste", "Paste", "Enter"),
+        action("copy", "Copy", "Ctrl+Enter"),
+        pin,
+        action("delete", "Delete", "Ctrl+Delete"),
+    ];
+    if matches!(entry.content, Content::Text { .. }) {
+        actions.insert(3, action("editSnippet", "Save as snippet", "Ctrl+S"));
+    }
     SearchResult {
         id: format!("clip:{}", entry.id),
         title: entry.content.summary(),
@@ -312,12 +332,7 @@ fn clipboard_result(entry: &Entry, highlights: Vec<[u32; 2]>, now: u64) -> Searc
         icon,
         glyph: Some("clipboard"),
         highlights,
-        actions: vec![
-            action("paste", "Paste", "Enter"),
-            action("copy", "Copy", "Ctrl+Enter"),
-            pin,
-            action("delete", "Delete", "Ctrl+Delete"),
-        ],
+        actions,
         preview: Some(preview),
         ..Default::default()
     }
@@ -443,8 +458,10 @@ fn file_result(
 
 /// Files and folders whose name has every word of `text` in it, best
 /// first, with how well each matched.
+/// Notes (in `notes_dir`) show up as notes instead.
 fn file_matches(
     index: &FileIndex,
+    notes_dir: &Path,
     ranker: &mut Ranker,
     text: &str,
     limit: usize,
@@ -453,6 +470,7 @@ fn file_matches(
     let now = unix_now();
     let items: Vec<(&Path, &Meta, &str)> = index
         .iter()
+        .filter(|(path, _)| !path.starts_with(notes_dir))
         .map(|(path, meta)| (path, meta, file_index::display_name(path)))
         .collect();
     // Files changed lately are more likely to be the ones wanted.
@@ -478,15 +496,161 @@ fn is_shortcut(result: &SearchResult) -> bool {
     result.kind == "File" && (id.ends_with(".lnk") || id.ends_with(".url"))
 }
 
+fn snippet_key(id: u64) -> String {
+    format!("snip:{id}")
+}
+
+fn snippet_result(snippet: &Snippet, highlights: Vec<[u32; 2]>) -> SearchResult {
+    SearchResult {
+        id: snippet_key(snippet.id),
+        title: format!(";{}", snippet.keyword),
+        subtitle: Some(snippet.summary()),
+        kind: "Snippet",
+        glyph: Some("snippet"),
+        highlights,
+        actions: vec![
+            action("paste", "Paste", "Enter"),
+            action("copy", "Copy", "Ctrl+Enter"),
+            action("editSnippet", "Edit", "Ctrl+E"),
+            ResultAction {
+                confirm: Some(format!("Delete the snippet ;{}?", snippet.keyword)),
+                ..action("delete", "Delete", "Ctrl+Delete")
+            },
+        ],
+        preview: Some(Preview {
+            text: Some(snippet.text.chars().take(1000).collect()),
+            image: None,
+        }),
+        ..Default::default()
+    }
+}
+
+/// Opens the snippet editor, with `keyword` filled in if there is one.
+fn new_snippet_result(keyword: &str) -> SearchResult {
+    let (title, subtitle) = if keyword.is_empty() {
+        (
+            "New snippet".to_string(),
+            "Save text to paste by typing ; and a keyword".to_string(),
+        )
+    } else {
+        (
+            format!("New snippet ;{keyword}"),
+            format!("Save text to paste with ;{keyword}"),
+        )
+    };
+    SearchResult {
+        id: format!("snipcmd:new:{keyword}"),
+        title,
+        subtitle: Some(subtitle),
+        kind: "Snippet",
+        glyph: Some("add"),
+        actions: vec![action("editSnippet", "Create", "Enter")],
+        ..Default::default()
+    }
+}
+
+/// Snippets with every word of `text` in their keyword or text, best
+/// first, with how well each matched.
+fn snippet_matches(
+    store: &SnippetStore,
+    ranker: &mut Ranker,
+    text: &str,
+    limit: usize,
+    boost: impl Fn(&str) -> f64,
+) -> Vec<(f64, SearchResult)> {
+    store.with(|all| {
+        let items: Vec<(&Snippet, String)> = all
+            .all()
+            .iter()
+            .map(|s| (s, format!(";{}\n{}", s.keyword, s.text)))
+            .collect();
+        ranker
+            .rank_words(
+                text,
+                &items,
+                |item| &item.1,
+                |item| boost(&snippet_key(item.0.id)),
+                limit,
+            )
+            .into_iter()
+            .map(|r| {
+                let snippet = items[r.index].0;
+                let title = format!(";{}", snippet.keyword);
+                let highlights = rank::clip_highlights(r.highlights, &title);
+                (r.score, snippet_result(snippet, highlights))
+            })
+            .collect()
+    })
+}
+
+fn note_key(path: &Path) -> String {
+    format!("note:{}", path.display())
+}
+
+fn note_result(note: &Note, highlights: Vec<[u32; 2]>, now: u64) -> SearchResult {
+    SearchResult {
+        id: note_key(&note.path),
+        title: note.title.clone(),
+        subtitle: Some(history::ago(note.modified, now)),
+        kind: "Note",
+        glyph: Some("note"),
+        highlights,
+        actions: vec![
+            action("open", "Open", "Enter"),
+            action("copy", "Copy text", "Ctrl+Enter"),
+            action("openLocation", "Open file location", "Ctrl+Shift+Enter"),
+            ResultAction {
+                confirm: Some(format!(
+                    "Delete the note “{}”? It goes to the Recycle Bin.",
+                    note.title
+                )),
+                ..action("delete", "Delete", "Ctrl+Delete")
+            },
+        ],
+        preview: Some(Preview {
+            text: Some(note.text.chars().take(1000).collect()),
+            image: None,
+        }),
+        ..Default::default()
+    }
+}
+
+fn save_note_result(text: &str) -> SearchResult {
+    SearchResult {
+        id: format!("notecmd:save:{text}"),
+        title: format!("Save note “{text}”"),
+        subtitle: Some("As a text file in your notes folder".into()),
+        kind: "Note",
+        glyph: Some("add"),
+        actions: vec![
+            action("save", "Save", "Enter"),
+            action("saveOpen", "Save and open", "Ctrl+Enter"),
+        ],
+        ..Default::default()
+    }
+}
+
+fn notes_folder_result(dir: &Path) -> SearchResult {
+    SearchResult {
+        id: "notecmd:folder".into(),
+        title: "Open notes folder".into(),
+        subtitle: Some(dir.display().to_string()),
+        kind: "Note",
+        glyph: Some("folder"),
+        actions: vec![action("open", "Open", "Enter")],
+        ..Default::default()
+    }
+}
+
 #[tauri::command]
-pub fn search(
-    query: String,
-    index: State<AppIndex>,
-    state: State<SearchState>,
-    clipboard: State<ClipboardStore>,
-    settings: State<SettingsStore>,
-    files: State<FileSearch>,
-) -> Vec<SearchResult> {
+pub fn search(query: String, app: AppHandle) -> Vec<SearchResult> {
+    let index = app.state::<AppIndex>();
+    let state = app.state::<SearchState>();
+    let clipboard = app.state::<ClipboardStore>();
+    let settings = app.state::<SettingsStore>();
+    let files = app.state::<FileSearch>();
+    let snippet_store = app.state::<SnippetStore>();
+    let note_store = app.state::<NoteStore>();
     let usage = state.usage.lock().unwrap();
     let mut ranker = state.ranker.lock().unwrap();
     let now = unix_now();
@@ -525,17 +689,86 @@ pub fn search(
         }
         Query::Files("") => {
             let index = files.index();
+            let notes_dir = note_store.dir();
             index
-                .recent(MAX_FILE_RESULTS)
+                .recent(MAX_FILE_RESULTS * 2)
                 .into_iter()
+                .filter(|(path, _)| !path.starts_with(&notes_dir))
+                .take(MAX_FILE_RESULTS)
                 .map(|(path, meta)| file_result(&index, path, meta, Vec::new()))
                 .collect()
         }
-        Query::Files(text) => {
-            file_matches(&files.index(), &mut ranker, text, MAX_FILE_RESULTS, boost)
-                .into_iter()
-                .map(|(_, result)| result)
-                .collect()
+        Query::Files(text) => file_matches(
+            &files.index(),
+            &note_store.dir(),
+            &mut ranker,
+            text,
+            MAX_FILE_RESULTS,
+            boost,
+        )
+        .into_iter()
+        .map(|(_, result)| result)
+        .collect(),
+        Query::Snippets(text) => {
+            let keyword = snippets::clean_keyword(text);
+            let exact = snippet_store.with(|all| all.with_keyword(&keyword).cloned());
+            let mut results: Vec<SearchResult> = exact
+                .iter()
+                .map(|snippet| {
+                    let title_len = snippet.keyword.encode_utf16().count() as u32 + 1;
+                    snippet_result(snippet, vec![[0, title_len]])
+                })
+                .collect();
+            if text.is_empty() {
+                results.extend(snippet_store.with(|all| {
+                    all.all()
+                        .iter()
+                        .take(MAX_SNIPPET_RESULTS)
+                        .map(|snippet| snippet_result(snippet, Vec::new()))
+                        .collect::<Vec<_>>()
+                }));
+            } else {
+                let exact_id = exact.as_ref().map(|s| snippet_key(s.id));
+                results.extend(
+                    snippet_matches(
+                        &snippet_store,
+                        &mut ranker,
+                        text,
+                        MAX_SNIPPET_RESULTS,
+                        boost,
+                    )
+                    .into_iter()
+                    .map(|(_, result)| result)
+                    .filter(|result| Some(&result.id) != exact_id.as_ref()),
+                );
+            }
+            if text.is_empty() {
+                results.push(new_snippet_result(""));
+            } else if exact.is_none() && snippets::check_keyword(&keyword).is_ok() {
+                results.push(new_snippet_result(&keyword));
+            }
+            results
+        }
+        Query::Notes("") => {
+            let mut results: Vec<SearchResult> = note_store.with(|all| {
+                all.all()
+                    .iter()
+                    .take(MAX_NOTE_RESULTS)
+                    .map(|note| note_result(note, Vec::new(), now))
+                    .collect()
+            });
+            results.push(notes_folder_result(&note_store.dir()));
+            results
+        }
+        Query::Notes(text) => {
+            let mut results = vec![save_note_result(text)];
+            results.extend(note_store.with(|all| {
+                all.search(&mut ranker, text, MAX_NOTE_RESULTS)
+                    .into_iter()
+                    .map(|(note, _, highlights)| note_result(note, highlights, now))
+                    .collect::<Vec<_>>()
+            }));
+            results
         }
         Query::Commands(prefix) => query::matching_commands(prefix)
             .into_iter()
@@ -569,6 +802,7 @@ pub fn search(
                     ranked.iter().map(|(_, r)| r.title.to_lowercase()).collect();
                 let found = file_matches(
                     &files.index(),
+                    &note_store.dir(),
                     &mut ranker,
                     text,
                     FILES_AMONG_EVERYTHING + 2,
@@ -583,6 +817,27 @@ pub fn search(
                         .take(FILES_AMONG_EVERYTHING)
                         .map(|(score, r)| (score * FILE_WEIGHT, r)),
                 );
+                let snippets = snippet_matches(
+                    &snippet_store,
+                    &mut ranker,
+                    text,
+                    SNIPPETS_AMONG_EVERYTHING,
+                    boost,
+                );
+                ranked.extend(
+                    snippets
+                        .into_iter()
+                        .map(|(score, r)| (score * SNIPPET_WEIGHT, r)),
+                );
+                let notes: Vec<(f64, SearchResult)> = note_store.with(|all| {
+                    all.search(&mut ranker, text, NOTES_AMONG_EVERYTHING)
+                        .into_iter()
+                        .map(|(note, score, highlights)| {
+                            (score * NOTE_WEIGHT, note_result(note, highlights, now))
+                        })
+                        .collect()
+                });
+                ranked.extend(notes);
             }
             // A couple of clipboard matches, ranked below similar matches
             // of other kinds.
@@ -623,6 +878,9 @@ pub async fn run_action(
         }
         "app" => run_app_action(&app, &id, &action).await?,
         "file" => run_file_action(&app, &window, &id, details, &action).await?,
+        "snip" => return run_snippet_action(&app, &window, &id, details, &action).await,
+        "note" => return run_note_action(&app, &window, &id, details, &action).await,
+        "notecmd" => run_note_command(&app, details, &action).await?,
         "sys" => run_system_command(&app, details).await?,
         "calc" => {
             let owner = window.hwnd().map_err(|e| e.to_string())?;
@@ -732,6 +990,100 @@ async fn run_file_action(
             Ok(())
         }
     }
+}
+
+async fn run_snippet_action(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    key: &str,
+    id: &str,
+    action: &str,
+) -> Result<Outcome, String> {
+    let id: u64 = id.parse().map_err(|_| "Unknown snippet.")?;
+    let store = app.state::<SnippetStore>();
+    match action {
+        "delete" => {
+            store.remove(id)?;
+            Ok(Outcome::Refresh)
+        }
+        "copy" | "paste" => {
+            {
+                let owner = window.hwnd().map_err(|e| e.to_string())?;
+                let text = store.expanded(id, owner)?;
+                platform::copy_text(owner, &text)?;
+            }
+            app.state::<SearchState>().record_use(key);
+            launcher::hide(app);
+            if action == "paste" {
+                let target = launcher::previous_window(app);
+                in_background(move || {
+                    platform::clipboard::paste_into(target);
+                    Ok(())
+                })
+                .await?;
+            }
+            Ok(Outcome::Done)
+        }
+        other => Err(format!("Unknown action: {other}")),
+    }
+}
+
+async fn run_note_action(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    key: &str,
+    path: &str,
+    action: &str,
+) -> Result<Outcome, String> {
+    let file = PathBuf::from(path);
+    if !file.exists() {
+        return Err("That note isn't there anymore. It may have been moved or deleted.".into());
+    }
+    match action {
+        "delete" => {
+            let target = path.to_string();
+            in_background(move || platform::recycle(&target)).await?;
+            app.state::<NoteStore>().refresh();
+            return Ok(Outcome::Refresh);
+        }
+        "copy" => {
+            let text = notes::read_text(&file).map_err(|e| e.to_string())?;
+            let owner = window.hwnd().map_err(|e| e.to_string())?;
+            platform::copy_text(owner, text.trim_end())?;
+        }
+        "openLocation" => {
+            let target = path.to_string();
+            in_background(move || platform::show_in_explorer(&target)).await?;
+        }
+        _ => {
+            let target = path.to_string();
+            in_background(move || platform::open_path(&target)).await?;
+            app.state::<SearchState>().record_use(key);
+        }
+    }
+    launcher::hide(app);
+    Ok(Outcome::Done)
+}
+
+/// Saving a note typed after `/note`, and opening the notes folder.
+async fn run_note_command(app: &AppHandle, command: &str, action: &str) -> Result<(), String> {
+    let store = app.state::<NoteStore>();
+    let open = if let Some(text) = command.strip_prefix("save:") {
+        let path = store.create(text)?;
+        (action == "saveOpen").then_some(path)
+    } else if command == "folder" {
+        let dir = store.dir();
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("Couldn't make the notes folder: {e}"))?;
+        Some(dir)
+    } else {
+        return Err("Unknown command.".into());
+    };
+    if let Some(path) = open {
+        let target = path.to_string_lossy().into_owned();
+        in_background(move || platform::open_path(&target)).await?;
+    }
+    Ok(())
 }
 
 async fn run_app_action(app: &AppHandle, id: &str, action: &str) -> Result<(), String> {

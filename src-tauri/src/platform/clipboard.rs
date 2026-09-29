@@ -166,6 +166,21 @@ fn utf16_text(bytes: &[u8]) -> String {
     String::from_utf16_lossy(&units)
 }
 
+/// The text on the clipboard, if there is any.
+pub fn read_text(owner: HWND) -> Option<String> {
+    unsafe {
+        open(owner).ok()?;
+        let format = u32::from(CF_UNICODETEXT.0);
+        let text = if available(format) {
+            read_bytes(format).map(|bytes| utf16_text(&bytes))
+        } else {
+            None
+        };
+        let _ = CloseClipboard();
+        text
+    }
+}
+
 /// Puts `text` on the clipboard. `owner` is one of our windows; Windows
 /// needs one to accept new clipboard contents.
 pub fn copy_text(owner: HWND, text: &str) -> Result<(), String> {

@@ -10,10 +10,12 @@ mod file_search;
 mod files;
 mod icons;
 mod launcher;
+mod notes;
 mod platform;
 mod search;
 mod settings;
 mod setup;
+mod snippets;
 mod tray;
 
 use tauri::Manager;
@@ -49,6 +51,8 @@ fn main() {
             search::run_action,
             setup::setup_options,
             setup::save_setup,
+            snippets::snippet_draft,
+            snippets::save_snippet,
         ])
         .on_window_event(launcher::on_window_event)
         .setup(|app| {
@@ -58,6 +62,8 @@ fn main() {
             app.manage(settings::SettingsStore::load(file("settings.json")));
             app.manage(search::SearchState::load(file("usage.json")));
             app.manage(clipboard::ClipboardStore::load(file("clipboard")));
+            app.manage(snippets::SnippetStore::load(file("snippets.json")));
+            app.manage(notes::NoteStore::new(notes::notes_dir(handle)));
             app.manage(launcher::LauncherState::default());
 
             launcher::register_hotkey(handle);

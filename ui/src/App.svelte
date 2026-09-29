@@ -5,10 +5,12 @@
     type AppStatus,
     type ResultAction,
     type SearchResult,
+    type SnippetEditing,
   } from "./lib/backend";
   import Highlighted from "./lib/Highlighted.svelte";
   import ResultIcon from "./lib/ResultIcon.svelte";
   import Setup from "./lib/Setup.svelte";
+  import SnippetEditor from "./lib/SnippetEditor.svelte";
 
   let query = $state("");
   let results = $state<SearchResult[]>([]);
@@ -22,6 +24,8 @@
   let status = $state<AppStatus | null>(null);
   /** Showing the setup screen instead of search. */
   let showSetup = $state(false);
+  /** Showing the snippet editor instead of search. */
+  let editing = $state<SnippetEditing | null>(null);
   let input = $state<HTMLInputElement>();
   let root = $state<HTMLElement>();
   let latestSearch = 0;
@@ -68,6 +72,14 @@
   async function run(result: SearchResult, action: ResultAction) {
     error = null;
     if (action.id === "fill" && fill(result)) return;
+    if (action.id === "editSnippet") {
+      try {
+        editing = await backend.snippetDraft(result.id);
+      } catch (e) {
+        error = String(e);
+      }
+      return;
+    }
     const confirmed = confirming?.result.id === result.id && confirming.action.id === action.id;
     if (action.confirm && !confirmed) {
       confirming = { result, action };
@@ -149,7 +161,7 @@
         if (!event.ctrlKey && !event.altKey) break;
         const action = current && !showActions ? actionFor(event, current) : undefined;
         // Also keeps browser shortcuts like Ctrl+P (print) from firing.
-        if (action || ["P", "F", "R", "S"].includes(event.key.toUpperCase())) event.preventDefault();
+        if (action || ["P", "F", "R", "S", "E"].includes(event.key.toUpperCase())) event.preventDefault();
         if (action && current) run(current, action);
       }
     }
@@ -172,6 +184,16 @@
     focusInput();
     // Alt+Space may have been freed up, or setup reset.
     refreshStatus();
+  }
+
+  /** Back from the snippet editor: to the saved snippet, if it was saved. */
+  function finishEditing(savedKeyword: string | null) {
+    editing = null;
+    const next = savedKeyword === null ? query : `;${savedKeyword}`;
+    // Changing the text searches again; the same text needs asking.
+    if (next !== query) query = next;
+    else search(query, true);
+    queueMicrotask(focusInput);
   }
 
   async function finishSetup() {
@@ -203,6 +225,8 @@
 <main class="launcher" bind:this={root}>
   {#if showSetup}
     <Setup firstRun={status?.setupNeeded ?? false} onDone={finishSetup} />
+  {:else if editing}
+    <SnippetEditor {editing} onDone={finishEditing} />
   {:else}
   <div class="search">
     <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">

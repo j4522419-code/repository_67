@@ -2,7 +2,7 @@
 // for UI previews) it falls back to stand-ins so the UI still renders.
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { previewSearch } from "./preview";
+import { previewSearch, previewSnippetDraft } from "./preview";
 
 export interface AppStatus {
   version: string;
@@ -29,6 +29,19 @@ export interface SetupOptions {
   browsers: Choice[];
   searchEngines: Choice[];
   current: SetupChoices;
+}
+
+/** A snippet being made (`id` null) or changed on the editor screen. */
+export interface SnippetDraft {
+  id: number | null;
+  keyword: string;
+  text: string;
+}
+
+export interface SnippetEditing {
+  draft: SnippetDraft;
+  /** Like `{date}`, with what each stands for. */
+  placeholders: { text: string; meaning: string }[];
 }
 
 export interface ResultAction {
@@ -141,6 +154,20 @@ export const backend = {
     if (inTauri) return invoke("save_setup", { choices });
     previewSetupDone = true;
     return Promise.resolve();
+  },
+
+  /** What the snippet editor starts with for a result (see `editSnippet` actions). */
+  snippetDraft(id: string): Promise<SnippetEditing> {
+    return inTauri
+      ? invoke<SnippetEditing>("snippet_draft", { id })
+      : Promise.resolve(previewSnippetDraft(id));
+  },
+
+  /** Saves a snippet and returns its keyword. Rejects with what's wrong with it. */
+  saveSnippet(draft: SnippetDraft): Promise<string> {
+    if (inTauri) return invoke<string>("save_snippet", { draft });
+    if (!draft.keyword.replace(/^;/, "").trim()) return Promise.reject("Type a keyword, like “addr” to paste it with ;addr.");
+    return Promise.resolve(draft.keyword.replace(/^;/, "").trim().toLowerCase());
   },
 
   /** Called when the tray's "Settings…" asks for the setup screen. */
