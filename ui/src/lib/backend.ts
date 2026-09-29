@@ -6,12 +6,10 @@ import { previewSearch } from "./preview";
 
 export interface AppStatus {
   version: string;
-  /** The keys that open Grandium right now, e.g. ["Alt+Space"]. */
-  keys: string[];
-  /** Set when Alt+Space was chosen but another app has it. */
+  /** The key that opens Grandium: "Alt+Space". */
+  hotkey: string;
+  /** Set when another app has Alt+Space. */
   hotkeyError: string | null;
-  /** Set when the Windows key was chosen but couldn't be used. */
-  windowsKeyError: string | null;
   /** The first-run setup hasn't been completed yet. */
   setupNeeded: boolean;
 }
@@ -25,13 +23,11 @@ export interface SetupChoices {
   /** An installed browser's ID, or null for Windows' default browser. */
   browser: string | null;
   searchEngine: string;
-  openWith: string;
 }
 
 export interface SetupOptions {
   browsers: Choice[];
   searchEngines: Choice[];
-  openWith: Choice[];
   current: SetupChoices;
 }
 
@@ -82,13 +78,10 @@ let previewSetupDone = false;
 
 function previewStatus(): AppStatus {
   const params = new URLSearchParams(location.search);
-  const hotkeyError = params.has("hotkeyError") ? "HotKey already registered" : null;
-  const both = params.has("both");
   return {
     version: "dev",
-    keys: [...(hotkeyError ? [] : ["Alt+Space"]), ...(both ? ["Windows key"] : [])],
-    hotkeyError,
-    windowsKeyError: null,
+    hotkey: "Alt+Space",
+    hotkeyError: params.has("hotkeyError") ? "HotKey already registered" : null,
     setupNeeded: params.has("setup") && !previewSetupDone,
   };
 }
@@ -140,12 +133,7 @@ export const backend = {
             { id: "brave", name: "Brave Search" },
             { id: "ecosia", name: "Ecosia" },
           ],
-          openWith: [
-            { id: "altSpace", name: "Alt+Space" },
-            { id: "windowsKey", name: "Windows key" },
-            { id: "both", name: "Both" },
-          ],
-          current: { browser: null, searchEngine: "g", openWith: "altSpace" },
+          current: { browser: null, searchEngine: "g" },
         });
   },
 

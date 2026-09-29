@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Choosing the browser, search engine and keys: on first run, and later
+  // Choosing the browser and search engine: on first run, and later
   // from the tray's "Settings…". Works from the keyboard: Tab moves between
   // sections, arrow keys pick, Enter saves.
   import { onMount } from "svelte";
@@ -11,20 +11,18 @@
   /** "" stands for Windows' default browser. */
   let browser = $state("");
   let searchEngine = $state("g");
-  let openWith = $state("altSpace");
   let form = $state<HTMLFormElement>();
 
   onMount(async () => {
     options = await backend.setupOptions();
     browser = options.current.browser ?? "";
     searchEngine = options.current.searchEngine;
-    openWith = options.current.openWith;
     queueMicrotask(() => form?.querySelector<HTMLInputElement>("input:checked")?.focus());
   });
 
   async function save(event: SubmitEvent) {
     event.preventDefault();
-    await backend.saveSetup({ browser: browser || null, searchEngine, openWith });
+    await backend.saveSetup({ browser: browser || null, searchEngine });
     onDone();
   }
 
@@ -72,18 +70,6 @@
         {/each}
       </div>
     </fieldset>
-
-    <fieldset>
-      <legend>Open Grandium with</legend>
-      <div class="choices">
-        {#each options.openWith as choice (choice.id)}
-          <label><input type="radio" name="keys" value={choice.id} bind:group={openWith} />{choice.name}</label>
-        {/each}
-      </div>
-      {#if openWith !== "altSpace"}
-        <p class="note">Tapping the Windows key opens Grandium instead of Start. Start stays on Ctrl+Esc.</p>
-      {/if}
-    </fieldset>
   {/if}
 
   <footer>
@@ -107,15 +93,10 @@
     font-weight: 600;
   }
 
-  .intro,
-  .note {
+  .intro {
     margin: -8px 0 0;
     font-size: 13px;
     color: var(--text-secondary);
-  }
-
-  .note {
-    margin: 8px 0 0;
   }
 
   fieldset {

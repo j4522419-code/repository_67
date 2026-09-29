@@ -6,7 +6,7 @@ the web, run system commands, get back anything you copied, paste saved snippets
 and jot down quick notes. It runs in the tray, starts with Windows and keeps all
 data on your PC.
 
-*Status: M0–M3 built (launcher, app search, calculator/web/system commands, clipboard history), plus slash commands, Run-box commands, uninstalling apps, and the Windows-key option. Waiting for testing on Windows. Last updated 2026-09-29.*
+*Status: M0–M3 built (launcher, app search, calculator/web/system commands, clipboard history), plus slash commands, Run-box commands, and uninstalling apps. Waiting for testing on Windows. Last updated 2026-09-29.*
 
 ---
 
@@ -16,7 +16,7 @@ data on your PC.
 |---|---|
 | Name | **Grandium** |
 | Target OS | **Windows 11** (x64) |
-| Hotkey | **Alt+Space** by default. The tray menu offers Alt+Space, the Windows key on its own, or both. With the Windows key, Start is still on Ctrl+Esc. |
+| Hotkey | **Alt+Space**. (Opening it with the Windows key alone was tried and dropped: Windows 11 still opened Start.) |
 | Mouse | Hovering never changes the selection; only the arrow keys do. Clicking a row still runs it. |
 | v1 scope | Apps, calculator, web search, system commands, clipboard history, file search, snippets, quick notes, settings |
 | Stack | **Tauri 2**: a Rust backend with a Svelte + TypeScript UI |
@@ -136,8 +136,7 @@ Type `/` to see them all; Tab or Enter picks one.
   - the **browser** web searches and links open in (any installed browser,
     or Windows' default),
   - the **search engine** for everyday web searches (Google, Bing,
-    DuckDuckGo, Brave Search or Ecosia),
-  - the **keys** that open Grandium (Alt+Space, the Windows key, or both).
+    DuckDuckGo, Brave Search or Ecosia).
 
 ### App shell and settings
 - Tray icon (Open, Settings, Pause clipboard, Quit), start with Windows, and a

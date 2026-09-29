@@ -1,11 +1,9 @@
 //! The launcher window: the global hotkey, showing and hiding, and placement.
 
-use std::sync::mpsc::{self, Sender};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use grandium_core::layout::{launcher_origin, Rect};
-use grandium_core::settings::OpenWith;
 use grandium_core::DEFAULT_HOTKEY;
 use serde::Serialize;
 use tauri::{
@@ -15,7 +13,6 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, S
 
 use crate::apps;
 use crate::platform::clipboard::foreground_window;
-use crate::platform::windows_key::{self, WindowsKeyListener};
 use crate::settings::SettingsStore;
 
 /// Label of the launcher window in `tauri.conf.json`.
@@ -27,110 +24,51 @@ const MAX_HEIGHT: f64 = 720.0;
 /// not the user clicking away, so they don't hide it.
 const BLUR_GRACE: Duration = Duration::from_millis(250);
 
+#[derive(Default)]
 pub struct LauncherState {
-    open_with: Mutex<OpenWith>,
     /// Why Alt+Space couldn't be claimed, if it couldn't.
     hotkey_error: Mutex<Option<String>>,
-    windows_key_error: Mutex<Option<String>>,
-    windows_key: Mutex<Option<WindowsKeyListener>>,
-    /// Where taps of the Windows key arrive.
-    windows_key_taps: Sender<()>,
     shown_at: Mutex<Option<Instant>>,
     /// The window that was in front before the launcher opened, where
     /// pasting goes.
     previous_window: Mutex<isize>,
 }
 
-impl LauncherState {
-    /// Also starts the thread that turns Windows key taps into toggles.
-    pub fn new(app: &AppHandle) -> Self {
-        let (taps, tapped) = mpsc::channel();
-        let app = app.clone();
-        std::thread::spawn(move || {
-            for () in tapped {
-                toggle(&app);
-            }
-        });
-        Self {
-            open_with: Mutex::default(),
-            hotkey_error: Mutex::default(),
-            windows_key_error: Mutex::default(),
-            windows_key: Mutex::default(),
-            windows_key_taps: taps,
-            shown_at: Mutex::default(),
-            previous_window: Mutex::default(),
-        }
-    }
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppStatus {
     version: String,
-    /// The keys that open Grandium right now.
-    pub keys: Vec<&'static str>,
-    /// Set when Alt+Space was chosen but another app has it.
-    hotkey_error: Option<String>,
-    /// Set when the Windows key was chosen but couldn't be used.
-    windows_key_error: Option<String>,
+    /// The key that opens Grandium.
+    hotkey: &'static str,
+    /// Set when another app has Alt+Space.
+    pub hotkey_error: Option<String>,
     /// The first-run setup hasn't been completed yet.
     setup_needed: bool,
 }
 
-/// Claims the keys chosen in settings and lets go of the others. Problems
-/// (usually another app owning Alt+Space) are kept for the UI and tray.
-pub fn apply_open_with(app: &AppHandle, open_with: OpenWith) {
-    let state = app.state::<LauncherState>();
-    *state.open_with.lock().unwrap() = open_with;
-
+/// Claims Alt+Space. A problem (usually another app owning it) is kept for
+/// the UI and tray.
+pub fn register_hotkey(app: &AppHandle) {
     let shortcut: Shortcut = DEFAULT_HOTKEY.parse().expect("the default hotkey is valid");
     let shortcuts = app.global_shortcut();
-    let hotkey_error = if !open_with.uses_alt_space() {
-        let _ = shortcuts.unregister(shortcut);
-        None
-    } else if shortcuts.is_registered(shortcut) {
+    let error = if shortcuts.is_registered(shortcut) {
         None
     } else {
         shortcuts.register(shortcut).err().map(|e| e.to_string())
     };
-    *state.hotkey_error.lock().unwrap() = hotkey_error;
-
-    let mut listener = state.windows_key.lock().unwrap();
-    let mut windows_key_error = None;
-    if !open_with.uses_windows_key() {
-        if let Some(running) = listener.take() {
-            running.stop();
-        }
-    } else if listener.is_none() {
-        match windows_key::start(state.windows_key_taps.clone()) {
-            Ok(started) => *listener = Some(started),
-            Err(error) => windows_key_error = Some(error),
-        }
-    }
-    *state.windows_key_error.lock().unwrap() = windows_key_error;
+    *app.state::<LauncherState>().hotkey_error.lock().unwrap() = error;
 }
 
 pub fn status(app: &AppHandle) -> AppStatus {
-    let state = app.state::<LauncherState>();
-    let hotkey_error = state.hotkey_error.lock().unwrap().clone();
-    let windows_key_error = state.windows_key_error.lock().unwrap().clone();
-    let open_with = *state.open_with.lock().unwrap();
-    let keys = open_with
-        .keys()
-        .into_iter()
-        .filter(|&key| {
-            if key == DEFAULT_HOTKEY {
-                hotkey_error.is_none()
-            } else {
-                windows_key_error.is_none()
-            }
-        })
-        .collect();
     AppStatus {
         version: app.package_info().version.to_string(),
-        keys,
-        hotkey_error,
-        windows_key_error,
+        hotkey: DEFAULT_HOTKEY,
+        hotkey_error: app
+            .state::<LauncherState>()
+            .hotkey_error
+            .lock()
+            .unwrap()
+            .clone(),
         setup_needed: !app.state::<SettingsStore>().get().setup_done,
     }
 }

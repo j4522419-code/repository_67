@@ -56,10 +56,9 @@ fn main() {
             app.manage(settings::SettingsStore::load(file("settings.json")));
             app.manage(search::SearchState::load(file("usage.json")));
             app.manage(clipboard::ClipboardStore::load(file("clipboard")));
-            app.manage(launcher::LauncherState::new(handle));
+            app.manage(launcher::LauncherState::default());
 
-            let settings = app.state::<settings::SettingsStore>().get();
-            launcher::apply_open_with(handle, settings.open_with);
+            launcher::register_hotkey(handle);
             tray::create(handle)?;
             clipboard::start_recording(handle);
             // Show the launcher once at startup so it's clear Grandium is running.

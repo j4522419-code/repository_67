@@ -170,7 +170,7 @@
 
   function onShown() {
     focusInput();
-    // The keys may have changed from the tray menu.
+    // Alt+Space may have been freed up, or setup reset.
     refreshStatus();
   }
 
@@ -226,15 +226,7 @@
     <div class="notice warning" role="alert">
       <strong>Alt+Space is taken by another app</strong>
       (PowerToys Run or Command Palette, for example).
-      {status.keys.length
-        ? `You can still use the ${status.keys.join(" or ")}.`
-        : "Open Grandium from its tray icon, or pick the Windows key there."}
-    </div>
-  {/if}
-  {#if status?.windowsKeyError}
-    <div class="notice warning" role="alert">
-      <strong>The Windows key couldn't be set up.</strong>
-      {status.windowsKeyError}
+      Open Grandium from its tray icon instead.
     </div>
   {/if}
 
@@ -310,14 +302,10 @@
       <span><kbd>↵</kbd> {confirming.action.label}</span>
     {:else if results.length}
       <span><kbd>↑</kbd><kbd>↓</kbd> select · <kbd>↵</kbd> open · <kbd>Tab</kbd> {current?.fill ? "complete" : "actions"}</span>
-    {:else if status && !status.keys.length}
+    {:else if status?.hotkeyError}
       <span>Grandium keeps running in the tray</span>
     {:else}
-      <span>
-        Press
-        {#each status?.keys ?? ["Alt+Space"] as key, i (key)}{#if i > 0}&nbsp;or{" "}{/if}<kbd>{key}</kbd>{/each}
-        anytime to open Grandium
-      </span>
+      <span>Press <kbd>{status?.hotkey ?? "Alt+Space"}</kbd> anytime to open Grandium</span>
     {/if}
     <span><kbd>Esc</kbd> {confirming ? "cancel" : showActions ? "back" : "close"}</span>
   </footer>
