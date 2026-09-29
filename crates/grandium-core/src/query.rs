@@ -15,6 +15,8 @@ pub enum Query<'a> {
     System(&'a str),
     /// `/run regedit`: run anything, like the Run box (Win+R).
     Run(&'a str),
+    /// `/clip` or `/clip meeting`: clipboard history.
+    Clipboard(&'a str),
     /// `/` or `/goo`, before a space: picking a slash command.
     Commands(&'a str),
 }
@@ -36,6 +38,7 @@ enum Kind {
     Calculator,
     System,
     Run,
+    Clipboard,
 }
 
 pub const SLASH_COMMANDS: &[SlashCommand] = &[
@@ -75,6 +78,13 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         kind: Kind::Run,
     },
     SlashCommand {
+        name: "clip",
+        aliases: &["clipboard", "c"],
+        description: "Clipboard history",
+        glyph: "clipboard",
+        kind: Kind::Clipboard,
+    },
+    SlashCommand {
         name: "system",
         aliases: &["sys"],
         description: "Lock, sleep, restart, shut down…",
@@ -95,6 +105,7 @@ impl SlashCommand {
             Kind::Calculator => Query::Calculator(text),
             Kind::System => Query::System(text),
             Kind::Run => Query::Run(text),
+            Kind::Clipboard => Query::Clipboard(text),
         }
     }
 }
@@ -157,6 +168,8 @@ mod tests {
         assert_eq!(parse("/run %temp%"), Query::Run("%temp%"));
         assert_eq!(parse("/system sle"), Query::System("sle"));
         assert_eq!(parse("/sys "), Query::System(""));
+        assert_eq!(parse("/clip meeting"), Query::Clipboard("meeting"));
+        assert_eq!(parse("/c "), Query::Clipboard(""));
     }
 
     #[test]
@@ -182,6 +195,7 @@ mod tests {
         // "w" is Wikipedia's alias, so it comes first.
         assert_eq!(names("w")[0], "wiki");
         assert_eq!(names("s"), vec!["system"]);
+        assert_eq!(names("c"), vec!["clip", "calc"]);
         assert!(names("zzz").is_empty());
     }
 }

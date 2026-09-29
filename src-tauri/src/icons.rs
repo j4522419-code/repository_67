@@ -48,7 +48,7 @@ impl IconServer {
     }
 }
 
-fn png_response(png: Vec<u8>) -> Response<Vec<u8>> {
+pub fn png_response(png: Vec<u8>) -> Response<Vec<u8>> {
     let mut response = Response::new(png);
     let headers = response.headers_mut();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/png"));
@@ -59,7 +59,7 @@ fn png_response(png: Vec<u8>) -> Response<Vec<u8>> {
     response
 }
 
-fn not_found() -> Response<Vec<u8>> {
+pub fn not_found() -> Response<Vec<u8>> {
     let mut response = Response::new(Vec::new());
     *response.status_mut() = StatusCode::NOT_FOUND;
     response

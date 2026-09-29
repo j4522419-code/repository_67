@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use grandium_core::uninstall::InstalledProgram;
+use grandium_core::uninstall::{self, InstalledProgram};
 use windows::core::HSTRING;
 use windows::ApplicationModel::PackageSignatureKind;
 use windows::Management::Deployment::PackageManager;
@@ -49,8 +49,9 @@ pub fn installed_programs() -> Vec<InstalledProgram> {
 }
 
 /// This user's Store packages that can be removed, by package family name,
-/// with the full name removing needs. Leaves out parts of Windows and
-/// shared frameworks.
+/// with the full name removing needs. Leaves out parts of Windows, shared
+/// frameworks, and anything from Microsoft (see
+/// [`uninstall::is_microsoft_package`]).
 pub fn removable_packages() -> HashMap<String, String> {
     let mut packages = HashMap::new();
     let Ok(manager) = PackageManager::new() else {
@@ -66,7 +67,10 @@ pub fn removable_packages() -> HashMap<String, String> {
                 .is_ok_and(|kind| kind != PackageSignatureKind::System);
         if let (true, Ok(id)) = (removable, package.Id()) {
             if let (Ok(family), Ok(full)) = (id.FamilyName(), id.FullName()) {
-                packages.insert(family.to_string(), full.to_string());
+                let family = family.to_string();
+                if !uninstall::is_microsoft_package(&family) {
+                    packages.insert(family, full.to_string());
+                }
             }
         }
     }

@@ -3,7 +3,9 @@
 
 pub mod apps;
 pub mod calc;
+pub mod clipboard;
 pub mod icon;
+pub mod image;
 pub mod layout;
 pub mod query;
 pub mod rank;

@@ -29,8 +29,10 @@ pub struct App {
 
 #[derive(Clone)]
 pub enum Uninstall {
-    /// The program's own uninstall command.
-    Program(String),
+    /// A program, by its name in the installed programs list (which can
+    /// differ from the app's: "Git Bash" is part of "Git") and its own
+    /// uninstall command.
+    Program { name: String, command: String },
     /// A Store package, by its full name.
     Package(String),
 }
@@ -101,11 +103,16 @@ fn to_apps(
         .into_iter()
         .map(|app| {
             let target = app.target.as_deref().and_then(apps::clean_target);
-            let uninstall = match uninstall::package_family(&app.id) {
-                Some(family) => packages.get(family).cloned().map(Uninstall::Package),
-                None => uninstall::find_program(programs, &app.name, target.as_deref())
-                    .map(|program| Uninstall::Program(program.uninstall_command.clone())),
-            };
+            let uninstall =
+                match uninstall::package_family(&app.id) {
+                    Some(family) => packages.get(family).cloned().map(Uninstall::Package),
+                    None => uninstall::find_program(programs, &app.name, target.as_deref()).map(
+                        |program| Uninstall::Program {
+                            name: program.name.clone(),
+                            command: program.uninstall_command.clone(),
+                        },
+                    ),
+                };
             App {
                 key: format!("app:{}", app.id),
                 id: app.id,
@@ -150,7 +157,7 @@ mod tests {
         );
         for app in &removable {
             let how = match app.uninstall.as_ref().unwrap() {
-                Uninstall::Program(command) => command.clone(),
+                Uninstall::Program { name, command } => format!("{name}: {command}"),
                 Uninstall::Package(name) => format!("Store package {name}"),
             };
             println!("{:<40} | {how}", app.name);
@@ -167,6 +174,13 @@ mod tests {
                 .filter(in_windows)
                 .all(|app| app.uninstall.is_none()),
             "parts of Windows must never be offered for uninstalling"
+        );
+        assert!(
+            apps.iter().all(|app| !matches!(
+                &app.uninstall,
+                Some(Uninstall::Package(name)) if name.starts_with("Microsoft")
+            )),
+            "Microsoft's packages must never be offered for uninstalling"
         );
     }
 }

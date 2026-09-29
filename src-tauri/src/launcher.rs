@@ -14,13 +14,14 @@ use tauri::{
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState};
 
 use crate::apps;
+use crate::platform::clipboard::foreground_window;
 use crate::platform::windows_key::{self, WindowsKeyListener};
 
 /// Label of the launcher window in `tauri.conf.json`.
 const LABEL: &str = "launcher";
 /// Logical size limits; the UI picks the height to fit its content.
 const WIDTH: f64 = 680.0;
-const MAX_HEIGHT: f64 = 640.0;
+const MAX_HEIGHT: f64 = 720.0;
 /// Focus changes this soon after showing are part of activating the window,
 /// not the user clicking away, so they don't hide it.
 const BLUR_GRACE: Duration = Duration::from_millis(250);
@@ -34,6 +35,9 @@ pub struct LauncherState {
     /// Where taps of the Windows key arrive.
     windows_key_taps: Sender<()>,
     shown_at: Mutex<Option<Instant>>,
+    /// The window that was in front before the launcher opened, where
+    /// pasting goes.
+    previous_window: Mutex<isize>,
 }
 
 impl LauncherState {
@@ -53,6 +57,7 @@ impl LauncherState {
             windows_key: Mutex::default(),
             windows_key_taps: taps,
             shown_at: Mutex::default(),
+            previous_window: Mutex::default(),
         }
     }
 }
@@ -158,6 +163,7 @@ pub fn show(app: &AppHandle) {
     apps::refresh_if_stale(app);
     if !window.is_visible().unwrap_or(false) {
         place_on_cursor_monitor(app, &window);
+        remember_previous_window(app, &window);
     }
     if let Some(state) = app.try_state::<LauncherState>() {
         *state.shown_at.lock().unwrap() = Some(Instant::now());
@@ -165,6 +171,19 @@ pub fn show(app: &AppHandle) {
     let _ = window.show();
     let _ = window.set_focus();
     let _ = window.emit("launcher-shown", ());
+}
+
+fn remember_previous_window(app: &AppHandle, window: &WebviewWindow) {
+    let front = foreground_window();
+    let ours = window.hwnd().map_or(0, |hwnd| hwnd.0 as isize);
+    if let (Some(state), true) = (app.try_state::<LauncherState>(), front != ours) {
+        *state.previous_window.lock().unwrap() = front;
+    }
+}
+
+/// The window that was in front before the launcher opened.
+pub fn previous_window(app: &AppHandle) -> isize {
+    *app.state::<LauncherState>().previous_window.lock().unwrap()
 }
 
 /// Moves the window to the monitor the mouse is on, so it opens where

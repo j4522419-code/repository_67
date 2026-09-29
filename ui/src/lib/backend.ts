@@ -22,14 +22,28 @@ export interface ResultAction {
   confirm: string | null;
 }
 
+/** A picture served by one of Grandium's URL schemes. */
+export interface IconRef {
+  scheme: string;
+  key: string;
+}
+
+export interface Preview {
+  text: string | null;
+  image: IconRef | null;
+}
+
+/** After an action: "done" closed the launcher; "refresh" means search again. */
+export type Outcome = "done" | "refresh";
+
 export interface SearchResult {
   id: string;
   title: string;
   /** Smaller text after the title, like the folder `%temp%` stands for. */
   subtitle: string | null;
   kind: string;
-  /** An app icon: key for the `icon` URL scheme, see `iconUrl`. */
-  icon: string | null;
+  /** A picture to show as the icon: an app's icon or a copied image. */
+  icon: IconRef | null;
   /** A built-in icon by name, for results that aren't apps. */
   glyph: string | null;
   /** `[start, end)` ranges of `title` to highlight. */
@@ -38,6 +52,8 @@ export interface SearchResult {
   actions: ResultAction[];
   /** For slash commands: the text to put in the search box when picked. */
   fill: string | null;
+  /** Shown below the list while the result is selected. */
+  preview: Preview | null;
 }
 
 const inTauri = "__TAURI_INTERNALS__" in window;
@@ -74,12 +90,14 @@ export const backend = {
   },
 
   /** Runs one of a result's actions. Rejects with a message on failure. */
-  runAction(id: string, action: string): Promise<void> {
-    return inTauri ? invoke("run_action", { id, action }) : Promise.resolve();
+  runAction(id: string, action: string): Promise<Outcome> {
+    return inTauri
+      ? invoke<Outcome>("run_action", { id, action })
+      : Promise.resolve(["pin", "unpin", "delete", "run"].includes(action) ? "refresh" : "done");
   },
 
-  iconUrl(icon: string): string | null {
-    return inTauri ? convertFileSrc(icon, "icon") : null;
+  iconUrl(icon: IconRef): string | null {
+    return inTauri ? convertFileSrc(icon.key, icon.scheme) : null;
   },
 
   /** Called every time the launcher window is shown. */

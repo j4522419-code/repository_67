@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import {
     backend,
     type AppStatus,
@@ -25,16 +25,30 @@
 
   const current = $derived<SearchResult | undefined>(results[selected]);
 
+  // Search again whenever the text changes (and only then: `search` reads
+  // other state, which mustn't re-trigger this).
   $effect(() => {
-    search(query);
+    const text = query;
+    untrack(() => search(text));
   });
 
-  async function search(text: string) {
+  // Keep the selected row visible when the list scrolls.
+  $effect(() => {
+    void selected;
+    void results;
+    queueMicrotask(() => root?.querySelector(".row.selected")?.scrollIntoView({ block: "nearest" }));
+  });
+
+  /** With `keepSelection`, stays on the same result if it's still there. */
+  async function search(text: string, keepSelection = false) {
     const id = ++latestSearch;
+    const previous = { id: current?.id, index: selected };
     const found = await backend.search(text);
     if (id !== latestSearch) return; // a newer search already started
     results = found;
-    selected = 0;
+    const same = found.findIndex((result) => result.id === previous.id);
+    selected = !keepSelection ? 0 : same >= 0 ? same : Math.min(previous.index, found.length - 1);
+    selected = Math.max(selected, 0);
     showActions = false;
     confirming = null;
     error = null;
@@ -58,8 +72,9 @@
     }
     confirming = null;
     try {
-      await backend.runAction(result.id, action.id);
-      query = "";
+      const outcome = await backend.runAction(result.id, action.id);
+      if (outcome === "refresh") search(query, true);
+      else query = "";
     } catch (e) {
       error = String(e);
     }
@@ -82,9 +97,17 @@
     selectedAction = 0;
   }
 
-  /** Enter runs the first action; Ctrl/Shift+Enter run the matching one. */
+  /** The keys pressed, written like action shortcuts: "Ctrl+Shift+Enter". */
+  function keysOf(event: KeyboardEvent) {
+    const key = event.key.length === 1 ? event.key.toUpperCase() : event.key;
+    return [event.ctrlKey && "Ctrl", event.altKey && "Alt", event.shiftKey && "Shift", key]
+      .filter(Boolean)
+      .join("+");
+  }
+
+  /** Enter runs the first action; other shortcuts run the matching one. */
   function actionFor(event: KeyboardEvent, result: SearchResult) {
-    const keys = `${event.ctrlKey ? "Ctrl+" : ""}${event.shiftKey ? "Shift+" : ""}Enter`;
+    const keys = keysOf(event);
     if (keys === "Enter") return result.actions[0];
     return result.actions.find((action) => action.shortcut === keys);
   }
@@ -119,6 +142,13 @@
         else if (query) query = "";
         else backend.hide();
         break;
+      default: {
+        if (!event.ctrlKey && !event.altKey) break;
+        const action = current && !showActions ? actionFor(event, current) : undefined;
+        // Also keeps browser shortcuts like Ctrl+P (print) from firing.
+        if (action || ["P", "F", "R", "S"].includes(event.key.toUpperCase())) event.preventDefault();
+        if (action && current) run(current, action);
+      }
     }
   }
 
@@ -216,11 +246,10 @@
             src={result.icon ? backend.iconUrl(result.icon) : null}
             glyph={result.glyph}
             title={result.title}
+            thumbnail={result.icon?.scheme === "clip"}
           />
-          <span class="title">
-            <Highlighted text={result.title} ranges={result.highlights} />
-            {#if result.subtitle}<span class="subtitle">{result.subtitle}</span>{/if}
-          </span>
+          <span class="title"><Highlighted text={result.title} ranges={result.highlights} /></span>
+          {#if result.subtitle}<span class="subtitle">{result.subtitle}</span>{/if}
           <span class="meta">
             {i === selected ? `${result.actions[0].label} ↵` : result.kind}
           </span>
@@ -232,6 +261,16 @@
       <div class="empty">No matches for “{query.trim()}”</div>
     {/if}
   </div>
+
+  {#if current?.preview && !showActions}
+    <div class="preview">
+      {#if current.preview.image}
+        <img src={backend.iconUrl(current.preview.image)} alt="What was copied" />
+      {:else if current.preview.text}
+        <p>{current.preview.text}</p>
+      {/if}
+    </div>
+  {/if}
 
   {#if confirming}
     <div class="notice warning" role="alert">
@@ -313,6 +352,40 @@
     padding-bottom: 8px;
   }
 
+  /* Eight rows, then it scrolls. */
+  .results {
+    max-height: 392px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+
+  .preview {
+    margin: 0 12px 10px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    background: var(--subtle-fill);
+  }
+
+  .preview p {
+    margin: 0;
+    max-height: 7.5em;
+    overflow: hidden;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    user-select: text;
+  }
+
+  .preview img {
+    display: block;
+    max-width: 100%;
+    max-height: 120px;
+    margin: 0 auto;
+    border-radius: 4px;
+  }
+
   .heading {
     padding: 4px 12px 6px;
     font-size: 12px;
@@ -320,6 +393,7 @@
   }
 
   .row {
+    flex: none;
     display: flex;
     align-items: center;
     gap: 12px;
@@ -338,23 +412,37 @@
     background: var(--selected-fill);
   }
 
-  .title {
-    flex: 1;
+  /* A long title gives way first, so the subtitle (like "2 h ago") stays
+     visible; very long subtitles, like paths, are cut too. */
+  .title,
+  .subtitle {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .title {
+    flex: 0 1 auto;
+  }
+
+  .subtitle {
+    flex: 0 0 auto;
+    max-width: 45%;
+  }
+
+  .title {
     font-size: 15px;
   }
 
   .subtitle {
-    margin-left: 10px;
     font-size: 13px;
     color: var(--text-tertiary);
   }
 
   .meta {
     flex: none;
+    margin-left: auto;
     font-size: 12px;
     color: var(--text-tertiary);
   }
@@ -405,5 +493,9 @@
 
   kbd + kbd {
     margin-left: 2px;
+  }
+
+  .row kbd {
+    margin-left: auto;
   }
 </style>

@@ -1,8 +1,9 @@
 //! Windows APIs, wrapped for the rest of the app.
 
-mod clipboard;
+pub mod clipboard;
 mod power;
 mod programs;
+pub mod protect;
 mod registry;
 mod shell;
 pub mod windows_key;

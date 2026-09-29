@@ -120,6 +120,22 @@ pub fn package_family(app_id: &str) -> Option<&str> {
     (family.contains('_') && !family.contains('\\')).then_some(family)
 }
 
+/// Publisher IDs of Microsoft's packages: `8wekyb3d8bbwe` for its Store
+/// apps, `cw5n1h2txyewy` for parts of Windows.
+const MICROSOFT_PUBLISHERS: &[&str] = &["8wekyb3d8bbwe", "cw5n1h2txyewy"];
+
+/// Whether a Store package comes from Microsoft. Some of those are parts of
+/// Windows (like Windows Security) that must never be removed, and packages
+/// don't say which, so none of Microsoft's are offered.
+pub fn is_microsoft_package(family: &str) -> bool {
+    let publisher = family.rsplit('_').next().unwrap_or_default();
+    let name = family.to_ascii_lowercase();
+    MICROSOFT_PUBLISHERS.contains(&publisher.to_ascii_lowercase().as_str())
+        || ["microsoft.", "microsoftwindows.", "windows."]
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,6 +296,24 @@ mod tests {
             uninstall_command_line(r#""C:\App\uninst.exe" /I"#),
             (r"C:\App\uninst.exe".to_string(), "/I".to_string())
         );
+    }
+
+    #[test]
+    fn recognizes_microsoft_packages() {
+        assert!(is_microsoft_package("Microsoft.SecHealthUI_8wekyb3d8bbwe"));
+        assert!(is_microsoft_package(
+            "Microsoft.WindowsTerminal_8wekyb3d8bbwe"
+        ));
+        assert!(is_microsoft_package(
+            "MicrosoftWindows.Client.CBS_cw5n1h2txyewy"
+        ));
+        assert!(is_microsoft_package("Windows.PrintDialog_cw5n1h2txyewy"));
+        assert!(!is_microsoft_package(
+            "SpotifyAB.SpotifyMusic_zpdnekdrzrea0"
+        ));
+        assert!(!is_microsoft_package(
+            "5319275A.WhatsAppDesktop_cv1g1gvanyjgm"
+        ));
     }
 
     #[test]

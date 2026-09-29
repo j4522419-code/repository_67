@@ -6,7 +6,7 @@ the web, run system commands, get back anything you copied, paste saved snippets
 and jot down quick notes. It runs in the tray, starts with Windows and keeps all
 data on your PC.
 
-*Status: M0 (foundation), M1 (app search) and M2 (calculator, web search, system commands) built, waiting for testing on Windows. Last updated 2026-09-29.*
+*Status: M0–M3 built (launcher, app search, calculator/web/system commands, clipboard history), plus slash commands, Run-box commands, uninstalling apps, and the Windows-key option. Waiting for testing on Windows. Last updated 2026-09-29.*
 
 ---
 
@@ -103,7 +103,11 @@ Type `/` to see them all; Tab or Enter picks one.
 - Anything destructive asks for confirmation first.
 
 ### Clipboard history
+- `/clip` (or `/c`) opens it; typing searches it. The best couple of matches
+  also show up in normal searches.
 - Records copied text and images, removes duplicates and keeps them searchable.
+- Stored in `%APPDATA%\Grandium\clipboard`, encrypted for your Windows account (DPAPI).
+- Ctrl+P pins, Ctrl+Delete deletes; the selected entry shows a preview.
 - **Enter** pastes into the app you were just using. **Ctrl+Enter** only copies.
 - Pinned items are never deleted.
 - **Safety:**

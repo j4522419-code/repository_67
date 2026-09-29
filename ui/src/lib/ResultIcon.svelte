@@ -5,7 +5,8 @@
     src,
     glyph,
     title,
-  }: { src: string | null; glyph: string | null; title: string } = $props();
+    thumbnail = false,
+  }: { src: string | null; glyph: string | null; title: string; thumbnail?: boolean } = $props();
 
   // Outlines on a 24×24 grid.
   const GLYPHS: Record<string, string[]> = {
@@ -38,6 +39,12 @@
       "M12 15h5",
     ],
     folder: ["M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"],
+    clipboard: [
+      "M9 3h6a1 1 0 0 1 1 1v2H8V4a1 1 0 0 1 1-1z",
+      "M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2",
+    ],
+    pause: ["M9 5v14M15 5v14"],
+    play: ["M8 5l11 7-11 7z"],
   };
 
   let failed = $state(false);
@@ -50,7 +57,7 @@
 </script>
 
 {#if src && !failed}
-  <img {src} alt="" onerror={() => (failed = true)} />
+  <img {src} alt="" class:thumbnail onerror={() => (failed = true)} />
 {:else if paths}
   <span class="tile" aria-hidden="true">
     <svg viewBox="0 0 24 24">
@@ -67,6 +74,15 @@
     flex: none;
     width: 32px;
     height: 32px;
+  }
+
+  img {
+    object-fit: contain;
+  }
+
+  img.thumbnail {
+    object-fit: cover;
+    border-radius: 5px;
   }
 
   .tile {

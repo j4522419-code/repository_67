@@ -5,6 +5,7 @@
 compile_error!("Grandium is a Windows app.");
 
 mod apps;
+mod clipboard;
 mod files;
 mod icons;
 mod launcher;
@@ -33,6 +34,9 @@ fn main() {
             icons::SCHEME,
             move |_ctx, request, responder| icon_server.handle(request, responder),
         )
+        .register_asynchronous_uri_scheme_protocol(clipboard::SCHEME, |ctx, request, responder| {
+            clipboard::serve_picture(ctx.app_handle(), request, responder)
+        })
         .manage(apps::AppIndex::default())
         .invoke_handler(tauri::generate_handler![
             launcher::app_status,
@@ -48,11 +52,13 @@ fn main() {
             let file = |name: &str| data.as_ref().map(|dir| dir.join(name));
             app.manage(settings::SettingsStore::load(file("settings.json")));
             app.manage(search::SearchState::load(file("usage.json")));
+            app.manage(clipboard::ClipboardStore::load(file("clipboard")));
             app.manage(launcher::LauncherState::new(handle));
 
             let settings = app.state::<settings::SettingsStore>().get();
             launcher::apply_open_with(handle, settings.open_with);
             tray::create(handle)?;
+            clipboard::start_recording(handle);
             // Show the launcher once at startup so it's clear Grandium is running.
             launcher::show(handle);
             Ok(())

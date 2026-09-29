@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use grandium_core::apps::{can_run_as_admin, has_file_location};
+use grandium_core::clipboard::{self as history, Content, Entry};
 use grandium_core::query::{self, Query, SlashCommand};
 use grandium_core::rank::Ranker;
 use grandium_core::system::{self, Command};
@@ -15,11 +16,14 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State, WebviewWindow};
 
 use crate::apps::{App, AppIndex, Uninstall};
-use crate::files;
-use crate::launcher;
+use crate::clipboard::{self, ClipboardStore};
 use crate::platform::{self, Com, Launch};
+use crate::settings::SettingsStore;
+use crate::{files, icons, launcher, tray};
 
 const MAX_RESULTS: usize = 8;
+/// Clipboard history scrolls, so it can show more.
+const MAX_CLIPBOARD_RESULTS: usize = 50;
 
 pub struct SearchState {
     ranker: Mutex<Ranker>,
@@ -64,8 +68,8 @@ pub struct SearchResult {
     /// Smaller text after the title, like the folder `%temp%` stands for.
     subtitle: Option<String>,
     kind: &'static str,
-    /// An app icon: what to pass to the `icon` URL scheme.
-    icon: Option<String>,
+    /// A picture to show as the icon: an app's icon or a copied image.
+    icon: Option<IconRef>,
     /// A built-in icon, by name, for results that aren't apps.
     glyph: Option<&'static str>,
     /// `[start, end)` ranges of `title` to highlight, in UTF-16 units.
@@ -74,6 +78,31 @@ pub struct SearchResult {
     actions: Vec<ResultAction>,
     /// For slash commands: the text to put in the search box when picked.
     fill: Option<String>,
+    /// Shown below the list while the result is selected.
+    preview: Option<Preview>,
+}
+
+/// A picture the UI loads through one of Grandium's URL schemes.
+#[derive(Clone, Serialize)]
+pub struct IconRef {
+    scheme: &'static str,
+    key: String,
+}
+
+#[derive(Serialize)]
+pub struct Preview {
+    text: Option<String>,
+    image: Option<IconRef>,
+}
+
+/// What happened after running an action.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Outcome {
+    /// It's done and the launcher closed.
+    Done,
+    /// The launcher stays open; search again to show the change.
+    Refresh,
 }
 
 #[derive(Serialize)]
@@ -109,23 +138,35 @@ fn app_result(app: &App, highlights: Vec<[u32; 2]>) -> SearchResult {
         ));
     }
     if let Some(how) = &app.uninstall {
-        let what_happens = match how {
-            Uninstall::Program(_) => "This opens its uninstaller.",
-            Uninstall::Package(_) => "It will be removed from this PC.",
+        let question = match how {
+            Uninstall::Program { name, .. } if name.eq_ignore_ascii_case(&app.name) => {
+                format!("Uninstall {name}? This opens its uninstaller.")
+            }
+            // Say what really goes: uninstalling "Git Bash" removes Git.
+            Uninstall::Program { name, .. } => format!(
+                "Uninstall {name}? {} is part of it. This opens its uninstaller.",
+                app.name
+            ),
+            Uninstall::Package(_) => {
+                format!("Uninstall {}? It will be removed from this PC.", app.name)
+            }
         };
         actions.push(ResultAction {
             id: "uninstall",
             label: "Uninstall",
             // No shortcut, so it can't happen by accident.
             shortcut: None,
-            confirm: Some(format!("Uninstall {}? {what_happens}", app.name)),
+            confirm: Some(question),
         });
     }
     SearchResult {
         id: app.key.clone(),
         title: app.name.clone(),
         kind: "App",
-        icon: Some(app.id.clone()),
+        icon: Some(IconRef {
+            scheme: icons::SCHEME,
+            key: app.id.clone(),
+        }),
         glyph: None,
         highlights,
         actions,
@@ -230,11 +271,144 @@ fn slash_command_result(command: &SlashCommand) -> SearchResult {
     }
 }
 
+fn clipboard_result(entry: &Entry, highlights: Vec<[u32; 2]>, now: u64) -> SearchResult {
+    let when = history::ago(entry.copied_at, now);
+    let icon = matches!(entry.content, Content::Image { .. }).then(|| IconRef {
+        scheme: clipboard::SCHEME,
+        key: entry.id.to_string(),
+    });
+    let preview = match &entry.content {
+        Content::Text { text } => Preview {
+            text: Some(text.chars().take(1000).collect()),
+            image: None,
+        },
+        Content::Image { .. } => Preview {
+            text: None,
+            image: icon.clone(),
+        },
+    };
+    let pin = if entry.pinned {
+        action("unpin", "Unpin", "Ctrl+P")
+    } else {
+        action("pin", "Pin", "Ctrl+P")
+    };
+    SearchResult {
+        id: format!("clip:{}", entry.id),
+        title: entry.content.summary(),
+        subtitle: Some(if entry.pinned {
+            format!("Pinned · {when}")
+        } else {
+            when
+        }),
+        kind: "Clipboard",
+        icon,
+        glyph: Some("clipboard"),
+        highlights,
+        actions: vec![
+            action("paste", "Paste", "Enter"),
+            action("copy", "Copy", "Ctrl+Enter"),
+            pin,
+            action("delete", "Delete", "Ctrl+Delete"),
+        ],
+        preview: Some(preview),
+        ..Default::default()
+    }
+}
+
+/// Clipboard entries matching `text`, best first (all of them, pinned first,
+/// when `text` is empty), with how well each matched.
+fn clipboard_matches(
+    store: &ClipboardStore,
+    ranker: &mut Ranker,
+    text: &str,
+    limit: usize,
+) -> Vec<(f64, SearchResult)> {
+    let now = unix_now();
+    store.with(|history| {
+        let entries = history.listing();
+        if text.is_empty() {
+            return entries
+                .iter()
+                .take(limit)
+                .map(|entry| (0.0, clipboard_result(entry, Vec::new(), now)))
+                .collect();
+        }
+        let summaries: Vec<(&Entry, String)> = entries
+            .iter()
+            .map(|entry| (*entry, entry.content.summary()))
+            .collect();
+        // A tiny boost for newer copies, so they win ties.
+        let recency =
+            |copied_at: u64| 0.1 / (1.0 + now.saturating_sub(copied_at) as f64 / 86_400.0);
+        ranker
+            .rank(
+                text,
+                &summaries,
+                |item| &item.1,
+                |item| recency(item.0.copied_at),
+                limit,
+            )
+            .into_iter()
+            .map(|r| {
+                (
+                    r.score,
+                    clipboard_result(summaries[r.index].0, r.highlights, now),
+                )
+            })
+            .collect()
+    })
+}
+
+/// Pause/resume and clear, at the end of the clipboard history.
+fn clipboard_controls(paused: bool) -> Vec<SearchResult> {
+    let control = |id: &str, title: &str, subtitle: &str, glyph, action| SearchResult {
+        id: format!("clipcmd:{id}"),
+        title: title.to_string(),
+        subtitle: Some(subtitle.to_string()),
+        kind: "Clipboard",
+        glyph: Some(glyph),
+        actions: vec![action],
+        ..Default::default()
+    };
+    let pause = if paused {
+        control(
+            "resume",
+            "Resume clipboard history",
+            "Paused: new copies aren't being saved",
+            "play",
+            action("run", "Resume", "Enter"),
+        )
+    } else {
+        control(
+            "pause",
+            "Pause clipboard history",
+            "Stop saving new copies for now",
+            "pause",
+            action("run", "Pause", "Enter"),
+        )
+    };
+    let clear = control(
+        "clear",
+        "Clear clipboard history",
+        "Pinned items stay",
+        "emptybin",
+        ResultAction {
+            confirm: Some(
+                "Delete everything in your clipboard history except pinned items?".into(),
+            ),
+            ..action("run", "Clear", "Enter")
+        },
+    );
+    vec![pause, clear]
+}
+
 #[tauri::command]
 pub fn search(
     query: String,
     index: State<AppIndex>,
     state: State<SearchState>,
+    clipboard: State<ClipboardStore>,
+    settings: State<SettingsStore>,
 ) -> Vec<SearchResult> {
     let usage = state.usage.lock().unwrap();
     let mut ranker = state.ranker.lock().unwrap();
@@ -261,6 +435,17 @@ pub fn search(
             .collect(),
         Query::Run("") => Vec::new(),
         Query::Run(text) => vec![run_result(text, Some(platform::expand_env(text)), "run")],
+        Query::Clipboard(text) => {
+            let mut results: Vec<SearchResult> =
+                clipboard_matches(&clipboard, &mut ranker, text, MAX_CLIPBOARD_RESULTS)
+                    .into_iter()
+                    .map(|(_, result)| result)
+                    .collect();
+            if text.is_empty() {
+                results.extend(clipboard_controls(settings.get().clipboard_paused));
+            }
+            results
+        }
         Query::Commands(prefix) => query::matching_commands(prefix)
             .into_iter()
             .map(slash_command_result)
@@ -287,6 +472,12 @@ pub fn search(
                 .map(|r| (r.score, app_result(&apps[r.index], r.highlights)))
                 .collect();
             ranked.extend(system_matches(&mut ranker, text));
+            // A couple of clipboard matches, ranked below similar matches
+            // of other kinds.
+            if text.chars().count() >= 3 {
+                let copies = clipboard_matches(&clipboard, &mut ranker, text, 2);
+                ranked.extend(copies.into_iter().map(|(score, r)| (score * 0.6, r)));
+            }
             ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
             let extras = [calc.is_some(), location.is_some(), program.is_some(), true];
             ranked.truncate(MAX_RESULTS - extras.iter().filter(|&&shown| shown).count());
@@ -307,9 +498,14 @@ pub async fn run_action(
     window: WebviewWindow,
     id: String,
     action: String,
-) -> Result<(), String> {
+) -> Result<Outcome, String> {
     let (kind, details) = id.split_once(':').ok_or("Unknown result.")?;
     match kind {
+        "clip" => return run_clipboard_action(&app, &window, details, &action).await,
+        "clipcmd" => {
+            run_clipboard_command(&app, details);
+            return Ok(Outcome::Refresh);
+        }
         "app" => run_app_action(&app, &id, &action).await?,
         "sys" => run_system_command(&app, details).await?,
         "calc" => {
@@ -336,7 +532,52 @@ pub async fn run_action(
         _ => return Err("Unknown result.".into()),
     }
     launcher::hide(&app);
-    Ok(())
+    Ok(Outcome::Done)
+}
+
+async fn run_clipboard_action(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    id: &str,
+    action: &str,
+) -> Result<Outcome, String> {
+    let id: u64 = id.parse().map_err(|_| "Unknown clipboard entry.")?;
+    let store = app.state::<ClipboardStore>();
+    match action {
+        "pin" | "unpin" => store.set_pinned(id, action == "pin"),
+        "delete" => store.delete(id),
+        "copy" | "paste" => {
+            {
+                let owner = window.hwnd().map_err(|e| e.to_string())?;
+                store.copy(id, owner)?;
+            }
+            launcher::hide(app);
+            if action == "paste" {
+                let target = launcher::previous_window(app);
+                in_background(move || {
+                    platform::clipboard::paste_into(target);
+                    Ok(())
+                })
+                .await?;
+            }
+            return Ok(Outcome::Done);
+        }
+        other => return Err(format!("Unknown action: {other}")),
+    }
+    Ok(Outcome::Refresh)
+}
+
+fn run_clipboard_command(app: &AppHandle, command: &str) {
+    match command {
+        "pause" | "resume" => {
+            let paused = command == "pause";
+            app.state::<SettingsStore>()
+                .update(|settings| settings.clipboard_paused = paused);
+            tray::sync_clipboard_paused(app, paused);
+        }
+        "clear" => app.state::<ClipboardStore>().clear(),
+        _ => {}
+    }
 }
 
 async fn run_app_action(app: &AppHandle, id: &str, action: &str) -> Result<(), String> {
@@ -371,7 +612,7 @@ async fn uninstall_app(app: &AppHandle, target: App) -> Result<(), String> {
     // takes a moment; either way the launcher should be out of the way.
     launcher::hide(app);
     let result = in_background(move || match how {
-        Uninstall::Program(command) => {
+        Uninstall::Program { command, .. } => {
             let (program, args) = uninstall::uninstall_command_line(&command);
             platform::start_program(&program, &args, Launch::Normal)
         }

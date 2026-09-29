@@ -33,7 +33,16 @@ function action(
 }
 
 function result(fields: Partial<SearchResult> & Pick<SearchResult, "id" | "title" | "kind">): SearchResult {
-  return { subtitle: null, icon: null, glyph: null, highlights: [], actions: [], fill: null, ...fields };
+  return {
+    subtitle: null,
+    icon: null,
+    glyph: null,
+    highlights: [],
+    actions: [],
+    fill: null,
+    preview: null,
+    ...fields,
+  };
 }
 
 function matching(title: string, q: string): [number, number][] | null {
@@ -46,6 +55,7 @@ const COMMANDS: [name: string, description: string, glyph: string][] = [
   ["youtube", "Search YouTube · also /yt", "web"],
   ["wiki", "Search Wikipedia · also /w, /wikipedia", "web"],
   ["calc", "Calculator · also /=", "calculator"],
+  ["clip", "Clipboard history · also /clipboard, /c", "clipboard"],
   ["run", "Run a command or open a path, like Win+R", "run"],
   ["system", "Lock, sleep, restart, shut down… · also /sys", "shutdown"],
 ];
@@ -53,7 +63,8 @@ const COMMANDS: [name: string, description: string, glyph: string][] = [
 export function previewSearch(query: string): SearchResult[] {
   const q = query.trim().toLowerCase();
   if (!q) return [];
-  if (q.startsWith("/") && !/\s/.test(query.trim())) {
+  // Like the real search: a slash command is still being picked until a space.
+  if (q.startsWith("/") && !/\s/.test(query.trimStart())) {
     return COMMANDS.filter(([name]) => name.startsWith(q.slice(1))).map(([name, subtitle, glyph]) =>
       result({
         id: `cmd:${name}`,
@@ -66,6 +77,7 @@ export function previewSearch(query: string): SearchResult[] {
       }),
     );
   }
+  if (q.startsWith("/clip")) return previewClipboard(q.slice(5).trim());
   const results: SearchResult[] = [];
   if (q === "%temp%") {
     results.push(
@@ -132,4 +144,57 @@ export function previewSearch(query: string): SearchResult[] {
     actions: [action("open", "Search")],
   }));
   return results.slice(0, 8);
+}
+
+const COPIES: [text: string, when: string, pinned: boolean][] = [
+  ["Home address: 12 Harbour Street, Wellington 6011", "yesterday", true],
+  ["https://github.com/j4522419-code/repository_67", "just now", false],
+  [
+    "Meeting notes: budget review moved to Thursday 3pm. Bring the Q3 numbers and the new hiring plan.",
+    "2 h ago",
+    false,
+  ],
+  ["npm run tauri build", "5 min ago", false],
+];
+
+function previewClipboard(q: string): SearchResult[] {
+  const results = COPIES.filter(([text]) => text.toLowerCase().includes(q)).map(
+    ([text, when, pinned], i) =>
+      result({
+        id: `clip:${i}`,
+        title: text,
+        subtitle: pinned ? `Pinned · ${when}` : when,
+        kind: "Clipboard",
+        glyph: "clipboard",
+        highlights: matching(text, q) ?? [],
+        actions: [
+          action("paste", "Paste"),
+          action("copy", "Copy", "Ctrl+Enter"),
+          action(pinned ? "unpin" : "pin", pinned ? "Unpin" : "Pin", "Ctrl+P"),
+          action("delete", "Delete", "Ctrl+Delete"),
+        ],
+        preview: { text, image: null },
+      }),
+  );
+  if (!q) {
+    results.push(
+      result({
+        id: "clipcmd:pause",
+        title: "Pause clipboard history",
+        subtitle: "Stop saving new copies for now",
+        kind: "Clipboard",
+        glyph: "pause",
+        actions: [action("run", "Pause")],
+      }),
+      result({
+        id: "clipcmd:clear",
+        title: "Clear clipboard history",
+        subtitle: "Pinned items stay",
+        kind: "Clipboard",
+        glyph: "emptybin",
+        actions: [action("run", "Clear", "Enter", "Delete everything in your clipboard history except pinned items?")],
+      }),
+    );
+  }
+  return results;
 }
