@@ -1,0 +1,7 @@
+[package]
+name = "grandium-core"
+description = "Platform-independent logic for Grandium"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

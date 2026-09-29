@@ -1,0 +1,77 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Tests and checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy -p grandium-core --all-targets -- -D warnings
+      - run: cargo test -p grandium-core
+
+  windows:
+    name: Windows build
+    runs-on: windows-latest
+    permissions:
+      contents: write # to publish releases from v* tags
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+
+      # The app embeds the built UI, so build it before linting.
+      - run: npm run build
+      - run: cargo clippy -p grandium -- -D warnings
+      - run: npm run tauri build
+
+      - name: Collect downloads
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item target/release/grandium.exe out/Grandium-portable.exe
+          Copy-Item target/release/bundle/nsis/*-setup.exe out/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grandium-windows
+          path: out/*
+          if-no-files-found: error
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          generate_release_notes: true

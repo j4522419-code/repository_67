@@ -1,0 +1,37 @@
+/* Colors follow the Windows 11 light/dark palettes. The backgrounds are
+   partly transparent so the window's acrylic blur shows through. */
+:root {
+  color-scheme: light dark;
+  --surface: rgba(243, 243, 243, 0.82);
+  --text: #1b1b1b;
+  --text-secondary: rgba(0, 0, 0, 0.62);
+  --text-tertiary: rgba(0, 0, 0, 0.45);
+  --divider: rgba(0, 0, 0, 0.08);
+  --subtle-fill: rgba(0, 0, 0, 0.04);
+  --warning-bg: rgba(255, 185, 0, 0.22);
+  --accent: #005fb8;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: rgba(32, 32, 32, 0.78);
+    --text: #ffffff;
+    --text-secondary: rgba(255, 255, 255, 0.72);
+    --text-tertiary: rgba(255, 255, 255, 0.5);
+    --divider: rgba(255, 255, 255, 0.08);
+    --subtle-fill: rgba(255, 255, 255, 0.06);
+    --warning-bg: rgba(252, 225, 0, 0.16);
+    --accent: #4cc2ff;
+  }
+}
+
+html,
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--surface);
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}

@@ -1,0 +1,15 @@
+[package]
+name = "grandium"
+description = "Keyboard launcher for Windows"
+version.workspace = true
+edition.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+grandium-core = { path = "../crates/grandium-core" }
+tauri = { version = "2.12", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "2.4"
+tauri-plugin-single-instance = "2.5"
+serde = { version = "1", features = ["derive"] }

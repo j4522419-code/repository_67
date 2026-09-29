@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5b4cf0"/>
+      <stop offset="1" stop-color="#0ea5c9"/>
+    </linearGradient>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="224" fill="url(#bg)"/>
+  <!-- The "G" -->
+  <path d="M 683 331 A 262 262 0 1 0 762 530 L 548 530"
+        fill="none" stroke="#fff" stroke-width="118" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Spark: the launcher appears on demand -->
+  <path d="M 812 132 Q 826 214 900 228 Q 826 242 812 324 Q 798 242 724 228 Q 798 214 812 132 Z" fill="#fff"/>
+</svg>
